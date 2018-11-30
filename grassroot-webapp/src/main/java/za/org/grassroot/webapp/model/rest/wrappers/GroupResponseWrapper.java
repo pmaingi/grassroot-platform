@@ -1,10 +1,15 @@
 package za.org.grassroot.webapp.model.rest.wrappers;
 
 import com.fasterxml.jackson.annotation.JsonInclude;
-import za.org.grassroot.core.domain.*;
+import com.fasterxml.jackson.databind.annotation.JsonSerialize;
+import za.org.grassroot.core.domain.Permission;
+import za.org.grassroot.core.domain.Role;
+import za.org.grassroot.core.domain.group.Group;
+import za.org.grassroot.core.domain.group.GroupLog;
 import za.org.grassroot.core.domain.task.Event;
 import za.org.grassroot.core.enums.GroupDefaultImage;
 import za.org.grassroot.core.util.DateTimeUtil;
+import za.org.grassroot.webapp.controller.android1.LegacyDateTimeSerializer;
 import za.org.grassroot.webapp.enums.GroupChangeType;
 import za.org.grassroot.webapp.util.RestUtil;
 
@@ -22,6 +27,8 @@ import java.util.stream.Collectors;
 @JsonInclude(JsonInclude.Include.NON_NULL)
 public class GroupResponseWrapper implements Comparable<GroupResponseWrapper> {
 
+    private static final int MAX_NUMBER_MEMBERS_SEND = 300;
+
     private final String groupUid;
     private final String groupName;
     private final String groupCreator;
@@ -35,6 +42,8 @@ public class GroupResponseWrapper implements Comparable<GroupResponseWrapper> {
     private String description;
     private GroupChangeType lastChangeType;
     private String lastChangeDescription;
+
+    @JsonSerialize(using = LegacyDateTimeSerializer.class)
     private LocalDateTime dateTime;
 
     private String imageUrl;
@@ -74,7 +83,8 @@ public class GroupResponseWrapper implements Comparable<GroupResponseWrapper> {
         }
 
         if (permissions.contains(Permission.GROUP_PERMISSION_SEE_MEMBER_DETAILS)) {
-            this.members = group.getMemberships().stream()
+            this.members = group.getMemberships()
+                    .stream().limit(MAX_NUMBER_MEMBERS_SEND)
                     .map(membership -> new MembershipResponseWrapper(group, membership.getUser(), membership.getRole(), false))
                     .collect(Collectors.toList());
         }
@@ -87,7 +97,7 @@ public class GroupResponseWrapper implements Comparable<GroupResponseWrapper> {
         this.lastChangeType = GroupChangeType.getChangeType(event);
         this.lastChangeDescription = event.getName();
         this.dateTime = event.getEventDateTimeAtSAST();
-        this.lastMajorChangeMillis = event.getCreatedDateTime().toEpochMilli();
+        this.lastMajorChangeMillis = group.getLatestChangeOrTaskTime().toEpochMilli();
     }
 
     public GroupResponseWrapper(Group group, GroupLog groupLog, Role role, boolean hasTasks){

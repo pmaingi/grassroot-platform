@@ -9,16 +9,16 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.ResponseBody;
 import org.springframework.web.bind.annotation.RestController;
 import za.org.grassroot.core.domain.EntityForUserResponse;
-import za.org.grassroot.core.domain.Group;
 import za.org.grassroot.core.domain.User;
+import za.org.grassroot.core.domain.group.Group;
 import za.org.grassroot.core.domain.task.Event;
 import za.org.grassroot.core.domain.task.EventRequest;
 import za.org.grassroot.core.domain.task.Vote;
-import za.org.grassroot.core.enums.EventType;
+import za.org.grassroot.core.enums.EventSpecialForm;
 import za.org.grassroot.core.enums.UserInterfaceType;
 import za.org.grassroot.core.util.DateTimeUtil;
 import za.org.grassroot.services.PermissionBroker;
-import za.org.grassroot.services.account.AccountGroupBroker;
+import za.org.grassroot.services.account.AccountFeaturesBroker;
 import za.org.grassroot.services.exception.AccountLimitExceededException;
 import za.org.grassroot.services.exception.EventStartTimeNotInFutureException;
 import za.org.grassroot.services.task.EventBroker;
@@ -33,10 +33,13 @@ import za.org.grassroot.webapp.util.USSDGroupUtil;
 import za.org.grassroot.webapp.util.USSDUrlUtil;
 
 import java.net.URISyntaxException;
+import java.security.InvalidParameterException;
 import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.ZonedDateTime;
 import java.time.temporal.ChronoUnit;
+import java.util.Collections;
+import java.util.List;
 
 import static org.springframework.web.bind.annotation.RequestMethod.GET;
 import static za.org.grassroot.core.domain.Permission.GROUP_PERMISSION_CREATE_GROUP_VOTE;
@@ -59,7 +62,7 @@ public class USSDVoteController extends USSDBaseController {
     private final EventRequestBroker eventRequestBroker;
     private final VoteBroker voteBroker;
     private final PermissionBroker permissionBroker;
-    private final AccountGroupBroker accountGroupBroker;
+    private final AccountFeaturesBroker accountFeaturesBroker;
 
     private USSDEventUtil eventUtil;
     private USSDGroupUtil groupUtil;
@@ -68,12 +71,12 @@ public class USSDVoteController extends USSDBaseController {
     private static final USSDSection thisSection = USSDSection.VOTES;
 
     @Autowired
-    public USSDVoteController(EventBroker eventBroker, EventRequestBroker eventRequestBroker, VoteBroker voteBroker, PermissionBroker permissionBroker, AccountGroupBroker accountGroupBroker) {
+    public USSDVoteController(EventBroker eventBroker, EventRequestBroker eventRequestBroker, VoteBroker voteBroker, PermissionBroker permissionBroker, AccountFeaturesBroker accountFeaturesBroker) {
         this.eventBroker = eventBroker;
         this.eventRequestBroker = eventRequestBroker;
         this.voteBroker = voteBroker;
         this.permissionBroker = permissionBroker;
-        this.accountGroupBroker = accountGroupBroker;
+        this.accountFeaturesBroker = accountFeaturesBroker;
     }
 
     @Autowired
@@ -100,22 +103,68 @@ public class USSDVoteController extends USSDBaseController {
                 vote.getAncestorGroup().getMembership(vote.getCreatedByUser()).getDisplayName(),
                 vote.getName()};
 
-        final String voteUri = voteMenus + "record?voteUid=" + vote.getUid() + "&response=";
-        final String optionMsgKey = voteKey + "." + optionsKey;
-
-        USSDMenu openingMenu = new USSDMenu(getMessage(USSDSection.HOME, startMenu, promptKey + "-vote", promptFields, user));
+        final String prompt = EventSpecialForm.MASS_VOTE.equals(vote.getSpecialForm()) ? promptKey + "-vote-mass" : promptKey + "-vote";
+        USSDMenu openingMenu = new USSDMenu(getMessage(USSDSection.HOME, startMenu, prompt, promptFields, user));
 
         if (vote.getVoteOptions().isEmpty()) {
-            openingMenu.addMenuOption(voteUri + "YES", getMessage(optionMsgKey + "yes", user));
-            openingMenu.addMenuOption(voteUri + "NO", getMessage(optionMsgKey + "no", user));
-            openingMenu.addMenuOption(voteUri + "ABSTAIN", getMessage(optionMsgKey + "abstain", user));
+            addYesNoOptions(vote, user, openingMenu);
         } else {
-            vote.getVoteOptions().forEach(o -> {
-                openingMenu.addMenuOption(voteUri + USSDUrlUtil.encodeParameter(o), o);
-            });
+            addVoteOptions(vote, openingMenu);
+        }
+
+        if (!StringUtils.isEmpty(vote.getDescription())) {
+            openingMenu.addMenuOption(voteMenus + "description?voteUid=" + vote.getUid() + "&back=respond",
+                    getMessage("home.generic.moreinfo", user));
         }
 
         return openingMenu;
+    }
+
+    @RequestMapping(value = path + "respond")
+    public Request respondToVote(@RequestParam(value = phoneNumber) String inputNumber,
+                                 @RequestParam String voteUid) throws URISyntaxException {
+        User user = userManager.findByInputNumber(inputNumber);
+        Vote vote = voteBroker.load(voteUid);
+        return menuBuilder(assembleVoteMenu(user, vote));
+    }
+
+    @RequestMapping(value = path + "description")
+    public Request showVoteDescription(@RequestParam(value = phoneNumber) String inputNumber,
+                                       @RequestParam String voteUid) throws URISyntaxException {
+        User user = userManager.findByInputNumber(inputNumber);
+        Vote vote = voteBroker.load(voteUid);
+
+        USSDMenu menu = new USSDMenu(vote.getDescription());
+        if (vote.getVoteOptions().isEmpty()) {
+            addYesNoOptions(vote, user, menu);
+        } else if (String.join("X. ", vote.getVoteOptions()).length() + 3 + vote.getDescription().length() < 160) {
+            addVoteOptions(vote, menu);
+        }
+
+        if (!menu.hasOptions() || menu.getMenuCharLength() < 160) {
+            menu.addMenuOption(voteMenus + "respond?voteUid=" + vote.getUid(), getMessage("options.back", user));
+        }
+
+        if (menu.getMenuCharLength() < 160) {
+            menu.addMenuOption("start_force", getMessage("options.skip", user));
+        }
+
+        return menuBuilder(menu);
+    }
+
+    private void addYesNoOptions(Vote vote, User user, USSDMenu menu) {
+        final String optionMsgKey = voteKey + "." + optionsKey;
+        final String voteUri = voteMenus + "record?voteUid=" + vote.getUid() + "&response=";
+        menu.addMenuOption(voteUri + "YES", getMessage(optionMsgKey + "yes", user));
+        menu.addMenuOption(voteUri + "NO", getMessage(optionMsgKey + "no", user));
+        menu.addMenuOption(voteUri + "ABSTAIN", getMessage(optionMsgKey + "abstain", user));
+    }
+
+    private void addVoteOptions(Vote vote, USSDMenu menu) {
+        final String voteUri = voteMenus + "record?voteUid=" + vote.getUid() + "&response=";
+        vote.getVoteOptions().forEach(o -> {
+            menu.addMenuOption(voteUri + USSDUrlUtil.encodeParameter(o), o);
+        });
     }
 
     @RequestMapping(value = path + "record")
@@ -125,8 +174,9 @@ public class USSDVoteController extends USSDBaseController {
         User user = userManager.findByInputNumber(inputNumber);
         voteBroker.recordUserVote(user.getUid(), voteUid, response);
         final String prompt = getMessage(thisSection, startMenu, promptKey + ".vote-recorded", user);
-        cacheManager.clearRsvpCacheForUser(user, EventType.VOTE);
-        return menuBuilder(new USSDMenu(prompt, optionsHomeExit(user, false)));
+        cacheManager.clearRsvpCacheForUser(user.getUid());
+        return userManager.needToPromptForLanguage(user, preLanguageSessions) ? menuBuilder(promptLanguageMenu(user)) :
+            menuBuilder(new USSDMenu(prompt, optionsHomeExit(user, false)));
     }
 
     /*
@@ -213,12 +263,20 @@ public class USSDVoteController extends USSDBaseController {
             final String timePrompt = getMessage(thisSection, "time", promptKey + ".multi", user);
             return menuBuilder(groupMenu(user, timePrompt, requestUid));
         } else {
+            return menuBuilder(addOptionAndReturn(user, requestUid, userInput));
+        }
+    }
+
+    private USSDMenu addOptionAndReturn(User user, String requestUid, String userInput) {
+        try {
             int newNumber = eventRequestBroker.addVoteOption(user.getUid(), requestUid, userInput);
             final String prompt = newNumber > 1 ?
-                    getMessage(thisSection, "multi", promptKey + ".more", user):
+                    getMessage(thisSection, "multi", promptKey + ".more", user) :
                     getMessage(thisSection, "multi", promptKey + ".1more", user);
-            USSDMenu menu = new USSDMenu(prompt, menuUrl("multi_option/add", requestUid));
-            return menuBuilder(menu);
+            return new USSDMenu(prompt, menuUrl("multi_option/add", requestUid));
+        } catch (InvalidParameterException e) {
+            final String prompt = getMessage(thisSection, "multi", promptKey + ".toolong", user);
+            return new USSDMenu(prompt, menuUrl("multi_option/add", requestUid));
         }
     }
 
@@ -308,7 +366,7 @@ public class USSDVoteController extends USSDBaseController {
         try {
             String createdUid = eventRequestBroker.finish(user.getUid(), requestUid, true);
             Event vote = eventBroker.load(createdUid);
-            int eventsLeft = accountGroupBroker.numberEventsLeftForParent(vote.getUid());
+            int eventsLeft = accountFeaturesBroker.numberEventsLeftForParent(vote.getUid());
             final String prompt = eventsLeft < EVENT_LIMIT_WARNING_THRESHOLD ?
                     getMessage(thisSection, "send", promptKey + ".limit", String.valueOf(eventsLeft), user) :
                     getMessage(thisSection, "send", promptKey, user);
@@ -336,7 +394,7 @@ public class USSDVoteController extends USSDBaseController {
     }
 
     private void setCustomTime(String requestUid, String userInput, User user) {
-        LocalDateTime parsedTime = eventUtil.parseDateTime(userInput);
+        LocalDateTime parsedTime = eventUtil.parseDateTime(userInput, null);
         userLogger.recordUserInputtedDateTime(user.getUid(), userInput, "vote-custom", UserInterfaceType.USSD);
         eventRequestBroker.updateEventDateTime(user.getUid(), requestUid, parsedTime);
     }

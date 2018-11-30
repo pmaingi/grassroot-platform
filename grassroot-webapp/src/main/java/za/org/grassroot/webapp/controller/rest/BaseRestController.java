@@ -1,12 +1,15 @@
 package za.org.grassroot.webapp.controller.rest;
 
+import lombok.extern.slf4j.Slf4j;
 import za.org.grassroot.core.domain.User;
-import za.org.grassroot.integration.messaging.JwtService;
+import za.org.grassroot.integration.authentication.JwtService;
 import za.org.grassroot.services.user.UserManagementService;
 import za.org.grassroot.webapp.model.http.AuthorizationHeader;
 
 import javax.servlet.http.HttpServletRequest;
+import java.util.List;
 
+@Slf4j
 public class BaseRestController {
 
     private final JwtService jwtService;
@@ -59,5 +62,9 @@ public class BaseRestController {
         }
 
         return null;
+    }
+
+    protected List<String> getPermissionsFromToken(String jwtToken) {
+        return jwtService.getPermissionsFromToken(jwtToken);
     }
 }

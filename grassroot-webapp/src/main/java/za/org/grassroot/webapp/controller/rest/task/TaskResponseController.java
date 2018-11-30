@@ -6,58 +6,70 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.AccessDeniedException;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.util.StringUtils;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
+import za.org.grassroot.core.dto.task.TaskFullDTO;
 import za.org.grassroot.core.enums.EventRSVPResponse;
 import za.org.grassroot.core.enums.TaskType;
+import za.org.grassroot.integration.authentication.JwtService;
 import za.org.grassroot.services.exception.TaskFinishedException;
 import za.org.grassroot.services.task.EventLogBroker;
+import za.org.grassroot.services.task.TaskBroker;
 import za.org.grassroot.services.task.TaskImageBroker;
 import za.org.grassroot.services.task.VoteBroker;
+import za.org.grassroot.services.user.UserManagementService;
+import za.org.grassroot.webapp.controller.rest.BaseRestController;
 import za.org.grassroot.webapp.controller.rest.Grassroot2RestController;
 import za.org.grassroot.webapp.enums.RestMessage;
 import za.org.grassroot.webapp.model.rest.wrappers.ResponseWrapper;
 import za.org.grassroot.webapp.util.RestUtil;
 
-@Slf4j
-@RestController @Grassroot2RestController
-@Api("/api/task/respond")
-@RequestMapping(value = "/api/task/respond")
-public class TaskResponseController {
+import javax.servlet.http.HttpServletRequest;
+import java.time.Instant;
 
+@Slf4j @RestController @Grassroot2RestController
+@RequestMapping(value = "/v2/api/task/respond") @Api("/v2/api/task/respond")
+@PreAuthorize("hasRole('ROLE_FULL_USER')")
+public class TaskResponseController extends BaseRestController {
+
+    private final TaskBroker taskBroker;
     private final EventLogBroker eventLogBroker;
     private final VoteBroker voteBroker;
     private final TaskImageBroker taskImageBroker;
 
     @Autowired
-    public TaskResponseController(EventLogBroker eventLogBroker, VoteBroker voteBroker, TaskImageBroker taskImageBroker) {
+    public TaskResponseController(JwtService jwtService, UserManagementService userManager, TaskBroker taskBroker, EventLogBroker eventLogBroker, VoteBroker voteBroker, TaskImageBroker taskImageBroker) {
+        super(jwtService, userManager);
+        this.taskBroker = taskBroker;
         this.eventLogBroker = eventLogBroker;
         this.voteBroker = voteBroker;
         this.taskImageBroker = taskImageBroker;
     }
 
-    @RequestMapping(value = "/meeting/{userUid}/{taskUid}", method = RequestMethod.POST)
+    @RequestMapping(value = "/meeting/{taskUid}", method = RequestMethod.POST)
     @ApiOperation(value = "Respond to a meeting invite, with RSVP options YES, NO, MAYBE (upper case)")
-    public ResponseEntity respondToMeeting(@PathVariable String userUid,
-                                           @PathVariable String taskUid,
+    public ResponseEntity respondToMeeting(HttpServletRequest request, @PathVariable String taskUid,
                                            @RequestParam EventRSVPResponse response) {
-        eventLogBroker.rsvpForEvent(taskUid, userUid, response);
+        eventLogBroker.rsvpForEvent(taskUid, getUserIdFromRequest(request), response);
         try {
-            return RestUtil.messageOkayResponse(RestMessage.RSVP_SENT);
+            return ResponseEntity.ok(taskBroker.loadResponses(getUserIdFromRequest(request), taskUid, TaskType.MEETING));
         } catch (TaskFinishedException e) {
             return RestUtil.errorResponse(RestMessage.MEETING_PAST);
         }
     }
 
-    @RequestMapping(value = "/vote/{userUid}/{taskUid}", method = RequestMethod.POST)
+    @RequestMapping(value = "/vote/{taskUid}", method = RequestMethod.POST)
     @ApiOperation(value = "Cast a response to a vote, with the user's response (taken from vote entity) as 'vote'")
-    public ResponseEntity respondToVote(@PathVariable String userUid,
+    public ResponseEntity respondToVote(HttpServletRequest request,
                                         @PathVariable String taskUid,
                                         @RequestParam String vote) {
         try {
-            voteBroker.recordUserVote(userUid, taskUid, vote.trim());
-            return RestUtil.messageOkayResponse(RestMessage.VOTE_RECORDED);
+            voteBroker.recordUserVote(getUserIdFromRequest(request), taskUid, vote.trim());
+            TaskFullDTO taskDto = new TaskFullDTO(voteBroker.load(taskUid), getUserFromRequest(request), Instant.now(), vote);
+            taskDto.setVoteResults(voteBroker.fetchVoteResults(getUserIdFromRequest(request), taskUid, true));
+            return ResponseEntity.ok(taskDto); // so it goes back with latest results
         } catch (IllegalArgumentException e) {
             return RestUtil.errorResponse(RestMessage.USER_NOT_PART_OF_VOTE);
         } catch (TaskFinishedException e) {

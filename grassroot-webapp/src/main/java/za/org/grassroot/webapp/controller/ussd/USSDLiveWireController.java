@@ -7,8 +7,8 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.ResponseBody;
 import org.springframework.web.bind.annotation.RestController;
-import za.org.grassroot.core.domain.Group;
 import za.org.grassroot.core.domain.User;
+import za.org.grassroot.core.domain.group.Group;
 import za.org.grassroot.core.domain.livewire.DataSubscriber;
 import za.org.grassroot.core.domain.livewire.LiveWireAlert;
 import za.org.grassroot.core.domain.task.Meeting;
@@ -134,13 +134,13 @@ public class USSDLiveWireController extends USSDBaseController {
     public Request selectContactForMeeting(@RequestParam String msisdn,
                                            @RequestParam(required = false) String mtgUid,
                                            @RequestParam(required = false) String alertUid) throws URISyntaxException {
-        User user = userManager.findByInputNumber(msisdn);
-        if (StringUtils.isNullOrEmpty(alertUid)) {
+        if (StringUtils.isNullOrEmpty(alertUid))
             Objects.requireNonNull(mtgUid);
-            alertUid = liveWireAlertBroker.create(user.getUid(), MEETING, mtgUid);
-            cacheManager.putUssdMenuForUser(msisdn, menuUri("mtg", alertUid));
-        }
-        return menuBuilder(assembleContactChoiceMenu(user, alertUid, MEETING));
+        User user = userManager.findByInputNumber(msisdn);
+        String loadAlertUid = !StringUtils.isNullOrEmpty(alertUid) ? alertUid :
+                liveWireAlertBroker.create(user.getUid(), MEETING, mtgUid);
+        cacheManager.putUssdMenuForUser(msisdn, menuUri("mtg", loadAlertUid));
+        return menuBuilder(assembleContactChoiceMenu(user, loadAlertUid, MEETING));
     }
 
     @RequestMapping("instant")
@@ -260,7 +260,7 @@ public class USSDLiveWireController extends USSDBaseController {
             return menuBuilder(menu);
         } else {
             User contactUser = StringUtils.isNullOrEmpty(contactUid) ?
-                    userManager.loadOrCreateUser(request) : userManager.load(contactUid);
+                    userManager.loadOrCreateUser(request, UserInterfaceType.USSD) : userManager.load(contactUid);
             cacheManager.putUssdMenuForUser(msisdn, menuRoot + "&contactUid=" + contactUser.getUid());
             liveWireAlertBroker.updateContactUser(sessionUser.getUid(), alertUid,
                     contactUser.getUid(), contactUser.getDisplayName());

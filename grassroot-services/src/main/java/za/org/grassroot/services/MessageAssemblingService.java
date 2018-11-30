@@ -1,10 +1,10 @@
 package za.org.grassroot.services;
 
-import za.org.grassroot.core.domain.Group;
 import za.org.grassroot.core.domain.SafetyEvent;
 import za.org.grassroot.core.domain.User;
 import za.org.grassroot.core.domain.association.GroupJoinRequest;
 import za.org.grassroot.core.domain.geo.Address;
+import za.org.grassroot.core.domain.group.Group;
 import za.org.grassroot.core.domain.task.*;
 import za.org.grassroot.core.dto.ResponseTotalsDTO;
 import za.org.grassroot.core.enums.EventRSVPResponse;
@@ -27,8 +27,6 @@ public interface MessageAssemblingService {
 
     String createTodoReminderMessage(User user, Todo todo);
 
-    String createTodoRecordedNotificationMessage(User target, Todo todo);
-
     String createTodoAssignedMessage(User user, Todo todo);
 
     String createTodoConfirmerMessage(User user, Todo todo);
@@ -45,6 +43,10 @@ public interface MessageAssemblingService {
 
     String createMeetingThankYourMessage(User target, Meeting meeting);
 
+    String createTodoCancelledMessage(User user, Todo todo);
+
+    String createTodoValidatedMessage(TodoAssignment todoAssignment);
+
     String createWelcomeMessage(String messageId, User user);
 
     String createSafetyEventMessage(User respondent, User requestor, Address address, boolean reminder);
@@ -60,6 +62,8 @@ public interface MessageAssemblingService {
     String createGroupJoinReminderMessage(User user, GroupJoinRequest request);
 
     String createGroupJoinResultMessage(GroupJoinRequest request, boolean approved);
+
+    String createGroupJoinedMessage(User user, Group group);
 
     String createReplyFailureMessage(User user);
 
@@ -80,5 +84,7 @@ public interface MessageAssemblingService {
     List<String> getMessagesForGroups(List<Group> groups);
 
     String createGroupJoinCodeMessage(Group group);
+
+    String createMultiLanguageMessage();
 
 }

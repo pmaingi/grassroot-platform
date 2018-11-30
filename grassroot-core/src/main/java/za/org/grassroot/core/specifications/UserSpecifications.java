@@ -1,12 +1,18 @@
 package za.org.grassroot.core.specifications;
 
 import org.springframework.data.jpa.domain.Specification;
-import za.org.grassroot.core.domain.*;
+import za.org.grassroot.core.domain.Role;
+import za.org.grassroot.core.domain.Role_;
+import za.org.grassroot.core.domain.User;
+import za.org.grassroot.core.domain.User_;
+import za.org.grassroot.core.domain.group.Group;
+import za.org.grassroot.core.domain.group.Membership;
+import za.org.grassroot.core.domain.group.Membership_;
 
 import javax.persistence.criteria.Join;
 import java.time.Instant;
 import java.util.Collection;
-import java.util.Set;
+import java.util.List;
 
 /**
  * Created by luke on 2016/10/21.
@@ -25,6 +31,10 @@ public final class UserSpecifications {
         return (root, query, cb) -> cb.equal(root.get(User_.hasInitiatedSession), true);
     }
 
+    public static Specification<User> isEnabled() {
+        return (root, query, cb) -> cb.isTrue(root.get(User_.enabled));
+    }
+
     public static Specification<User> hasAndroidProfile() {
         return (root, query, cb) -> cb.equal(root.get(User_.hasAndroidProfile), true);
     }
@@ -33,11 +43,15 @@ public final class UserSpecifications {
         return (root, query, cb) -> cb.equal(root.get(User_.hasWebProfile), true);
     }
 
+    public static Specification<User> hasWhatsAppOptIn() {
+        return (root, query, cb) -> cb.equal(root.get(User_.whatsAppOptedIn), true);
+    }
+
     public static Specification<User> phoneContains(String phoneNumber) {
         return (root, query, cb) -> cb.like(root.get(User_.phoneNumber), "27" + phoneNumber);
     }
 
-    public static Specification<User> inGroups(Set<Group> groups) {
+    public static Specification<User> inGroups(Collection<Group> groups) {
         return (root, query, cb) -> {
             query.distinct(true);
             Join<User, Membership> userMembershipJoin = root.join(User_.memberships);
@@ -49,12 +63,24 @@ public final class UserSpecifications {
         return (root, query, cb) -> cb.like(cb.lower(root.get(User_.displayName)), "%" + nameFragment.toLowerCase() + "%");
     }
 
+    public static Specification<User> withNameInGroups(String nameFragment, List<Group> groups) {
+        return Specification.where(inGroups(groups)).and(nameContains(nameFragment));
+    }
+
     public static Specification<User> uidIn(Collection<String> uids) {
         return (root, query, cb) -> root.get(User_.uid).in(uids);
     }
 
     public static Specification<User> isLiveWireContact() {
         return (root, query, cb) -> cb.isTrue(root.get(User_.liveWireContact));
+    }
+
+    public static Specification<User> hasStandardRole(String roleName) {
+        return (root, query, cb) -> {
+            Join<User, Role> userRoleJoin = root.join(User_.standardRoles);
+            return cb.and(cb.equal(userRoleJoin.get(Role_.roleType), Role.RoleType.STANDARD),
+                    cb.equal(userRoleJoin.get(Role_.name), roleName));
+        };
     }
 
 }

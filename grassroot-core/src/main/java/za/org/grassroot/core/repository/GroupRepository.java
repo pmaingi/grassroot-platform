@@ -10,9 +10,9 @@ import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.JpaSpecificationExecutor;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
-import za.org.grassroot.core.domain.Group;
 import za.org.grassroot.core.domain.Permission;
 import za.org.grassroot.core.domain.User;
+import za.org.grassroot.core.domain.group.Group;
 
 import java.time.Instant;
 import java.util.List;
@@ -62,10 +62,6 @@ public interface GroupRepository extends JpaRepository<Group, Long>, JpaSpecific
             "(to_tsvector('english', g.name) @@ to_tsquery('english', ?2))", nativeQuery = true)
     List<Group> findDiscoverableGroupsWithNameWithoutMember(Long userId, String tsQuery);
 
-    @Query(value = "select g.* from group_profile g " +
-            "where to_tsvector('english', g.name) @@ to_tsquery('english', ?1)", nativeQuery = true)
-    List<Group> findByFullTextSearchOnGroupName(String nameTsQuery);
-
     List<Group> findByGroupNameContainingIgnoreCase(String nameQuery);
 
     @Query(value = "select g.* from group_profile g " +
@@ -73,7 +69,23 @@ public interface GroupRepository extends JpaRepository<Group, Long>, JpaSpecific
             "where g.active = true and m.user_id = ?1 and to_tsvector('english', g.name) @@ to_tsquery('english', ?2)",
             nativeQuery = true)
     List<Group> findByActiveAndMembershipsUserWithNameContainsText(Long userId, String nameTsQuery);
-    
+
+    @Query(value = "select g.* from group_profile g " +
+            "inner join group_user_membership m on g.id = m.group_id " +
+            "inner join role_permissions rp on m.role_id = rp.role_id " +
+            "where g.active = true and g.parent is null and m.user_id = ?1 and rp.permission = ?2 " +
+            "and to_tsvector('english', g.name) @@ to_tsquery('english', ?3) " +
+            "order by greatest(g.last_task_creation_time, g.last_log_creation_time) desc", nativeQuery = true)
+    Page<Group> findUsersGroupsWithSearchTermOrderedByActivity(Long userId, String permission, String nameTsQuery, Pageable pageable);
+
+    @Query(value = "select g.* from group_profile g " +
+            "inner join group_user_membership m on g.id = m.group_id " +
+            "inner join role_permissions rp on m.role_id = rp.role_id " +
+            "where g.active = true and g.parent is null and m.user_id = ?1 and rp.permission = ?2 " +
+            "order by greatest(g.last_task_creation_time, g.last_log_creation_time) desc", nativeQuery = true)
+    Page<Group> findUsersGroupsOrderedByActivity(Long userId, String permission, Pageable pageable);
+
+
     @Query(value = "select groupTokenCode from Group")
     List<String> findAllTokenCodes();
 
@@ -98,15 +110,14 @@ public interface GroupRepository extends JpaRepository<Group, Long>, JpaSpecific
     @Query("select g from GroupLog gl inner join gl.group g inner join g.memberships m WHERE gl.groupLogType = 'GROUP_REMOVED' and gl.createdDateTime >= ?2 and m.user = ?1")
     List<Group> findMemberGroupsDeactivatedAfter(User member, Instant time);
 
-    @Query("SELECT g from GroupLog gl inner join gl.group g WHERE gl.groupLogType = 'GROUP_MEMBER_REMOVED' and gl.auxiliaryId = ?1 AND gl.createdDateTime >= ?2")
-    List<Group> findMembershipRemovedAfter(Long formerMemberId, Instant time);
+    @Query("SELECT g from GroupLog gl inner join gl.group g WHERE gl.groupLogType = 'GROUP_MEMBER_REMOVED' and gl.targetUser = ?1 AND gl.createdDateTime >= ?2")
+    List<Group> findMembershipRemovedAfter(User formerMember, Instant time);
 
     @Query(value = "select count(*) from Group g " +
             "inner join g.memberships m " +
             "where g.active = true and m.user = ?1 and ?2 member of m.role.permissions")
     int countActiveGroupsWhereUserHasPermission(User member, Permission requiredPermission);
 
-    // these are here just to make sure the tests catch if the HQL breaks, as we use it in location filtering a lot
     @Query("SELECT g from Group g where " +
             "size(g.memberships) > :minSize")
     List<Group> findBySizeAbove(@Param(value="minSize") int minSize);
@@ -114,5 +125,13 @@ public interface GroupRepository extends JpaRepository<Group, Long>, JpaSpecific
     @Query("SELECT g from Group g where " +
             "(size(g.descendantEvents) + size(g.descendantTodos)) > :minSize")
     List<Group> findByTasksMoreThan(@Param(value = "minSize") int minSize);
+
+    @Query("SELECT count(*) from Group g " +
+            "where size(g.memberships) < :limit")
+    int countGroupsWhereSizeBelowLimit(@Param(value = "limit") int limit);
+
+    @Query("SELECT count(*) from Group g " +
+            "where size(g.memberships) > :limit")
+    int countGroupsWhereSizeAboveLimit(@Param(value = "limit") int limit);
 
 }

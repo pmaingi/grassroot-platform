@@ -30,16 +30,21 @@ aws s3 cp s3://$S3BUCKET/pdf_templates/ templates/pdf/ --region $S3REGION --recu
 echo $COMMIT_MESSAGE > deploy_status.txt
 
 # COMMIT
+mv .deploy/.elasticbeanstalk .elasticbeanstalk
+mv .deploy/.ebextensions .ebextensions
+mv .deploy/.ebignore .ebignore
+mv .deploy/Dockerrun.aws.json Dockerrun.aws.json
+
 # thats just a "virtual" commit since we do not send anything back to the repository, but this is requred for beasntalke to get the latest staged version to be deployed
 git config --global user.email "grassroot@grassroot.com"
 git config --global user.name "GRASSROOT"
 git add .
 git commit -m "$ENVIRONMENT-$COMMIT_MESSAGE"
 
+echo "Finished with Git, proceeding to deploy to $EBENVIRONMENT, with message $ENVIRONMENT-$COMMIT_MESSAGE"
+
 # DEPLOY APP
-mv .deploy/.elasticbeanstalk .elasticbeanstalk
-mv .deploy/.ebextensions .ebextensions
-mv .deploy/.ebignore .ebignore
-mv .deploy/Dockerrun.aws.json Dockerrun.aws.json
-eb use $EBENVIRONMENT
+eb use $EBENVIRONMENT --verbose
 eb deploy $EBENVIRONMENT --label "$ENVIRONMENT-$COMMIT_MESSAGE" --timeout 20
+
+echo "Deployment completed"

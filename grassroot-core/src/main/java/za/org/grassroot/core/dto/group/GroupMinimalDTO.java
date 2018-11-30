@@ -4,9 +4,9 @@ import com.fasterxml.jackson.annotation.JsonIgnore;
 import com.fasterxml.jackson.databind.annotation.JsonSerialize;
 import lombok.Getter;
 import lombok.Setter;
-import za.org.grassroot.core.domain.Group;
-import za.org.grassroot.core.domain.Membership;
 import za.org.grassroot.core.domain.Permission;
+import za.org.grassroot.core.domain.group.Group;
+import za.org.grassroot.core.domain.group.Membership;
 import za.org.grassroot.core.domain.task.Event;
 import za.org.grassroot.core.enums.GroupViewPriority;
 import za.org.grassroot.core.enums.TaskType;
@@ -16,7 +16,7 @@ import za.org.grassroot.core.util.InstantToMilliSerializer;
 import java.time.Instant;
 import java.time.ZonedDateTime;
 import java.util.ArrayList;
-import java.util.Collections;
+import java.util.Comparator;
 import java.util.List;
 import java.util.Set;
 
@@ -29,7 +29,10 @@ public class GroupMinimalDTO extends GroupTimeChangedDTO {
     protected TaskType nextEventType;
     private final Set<Permission> userPermissions;
     private boolean pinned;
+    private boolean discoverable;
     private boolean hidden;
+
+    private String profileImageUrl;
 
     @JsonSerialize(using = InstantToMilliSerializer.class)
     private Instant lastTaskOrChangeTime;
@@ -41,10 +44,12 @@ public class GroupMinimalDTO extends GroupTimeChangedDTO {
         this.lastTaskOrChangeTime = group.getLatestChangeOrTaskTime();
         this.userPermissions = membership.getRole().getPermissions();
         this.pinned = GroupViewPriority.PINNED.equals(membership.getViewPriority());
+        this.discoverable = group.isDiscoverable();
         this.hidden = GroupViewPriority.HIDDEN.equals(membership.getViewPriority());
+        this.profileImageUrl = group.getImageUrl();
 
         List<Event> events = new ArrayList<>(group.getDescendantEvents());
-        Collections.sort(events, (o1, o2) -> (int) (o2.getDeadlineTime().toEpochMilli() - o1.getDeadlineTime().toEpochMilli()));
+        events.sort(Comparator.comparing(Event::getDeadlineTime, Comparator.reverseOrder()));
         for (Event event : events) {
             if (event.getDeadlineTime().isAfter(Instant.now())) {
                 this.nextEventTime = event.getDeadlineTime();

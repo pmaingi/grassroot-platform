@@ -1,18 +1,16 @@
 package za.org.grassroot.core.domain.task;
 
 import za.org.grassroot.core.domain.EntityForUserResponse;
-import za.org.grassroot.core.domain.Group;
+import za.org.grassroot.core.domain.TagHolder;
 import za.org.grassroot.core.domain.UidIdentifiable;
 import za.org.grassroot.core.domain.User;
+import za.org.grassroot.core.domain.group.Group;
 import za.org.grassroot.core.enums.TaskType;
 import za.org.grassroot.core.util.DateTimeUtil;
 
 import java.time.Instant;
 import java.time.LocalDateTime;
-import java.util.HashSet;
-import java.util.Map;
-import java.util.Objects;
-import java.util.Set;
+import java.util.*;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
@@ -20,16 +18,15 @@ import java.util.stream.Stream;
  * Common type for Vote, Meeting and To-do.
  * @param <P> parent type
  */
-public interface Task<P extends UidIdentifiable> extends EntityForUserResponse {
+public interface Task<P extends UidIdentifiable> extends EntityForUserResponse<P>, TagHolder {
 	TaskType getTaskType();
-
-	void setParent(P parent);
-	P getParent();
 
 	User getCreatedByUser();
 
 	Instant getCreatedDateTime();
 	Instant getDeadlineTime();
+
+	boolean hasImage();
 
 	default LocalDateTime getDeadlineTimeAtSAST() {
 		return getDeadlineTime().atZone(DateTimeUtil.getSAST()).toLocalDateTime();

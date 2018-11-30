@@ -6,10 +6,11 @@ import org.slf4j.LoggerFactory;
 import za.org.grassroot.core.domain.JpaEntityType;
 import za.org.grassroot.core.domain.User;
 import za.org.grassroot.core.domain.geo.GeoLocation;
+import za.org.grassroot.core.domain.task.Event;
 import za.org.grassroot.core.domain.task.EventReminderType;
 import za.org.grassroot.core.domain.task.MeetingBuilder;
 import za.org.grassroot.core.domain.task.MeetingContainer;
-import za.org.grassroot.core.enums.MeetingImportance;
+import za.org.grassroot.core.enums.EventSpecialForm;
 import za.org.grassroot.services.exception.EventStartTimeNotInFutureException;
 import za.org.grassroot.services.exception.TaskNameTooLongException;
 
@@ -38,13 +39,13 @@ public class MeetingBuilderHelper {
     private EventReminderType reminderType;
     private Integer customReminderMinutes = 0;
     private String description;
-    private MeetingImportance importance;
+    private EventSpecialForm importance;
 
-    private Set<String> assignedMemberUids;
+    @Getter private Set<String> assignedMemberUids;
     @Getter private String taskImageKey;
 
     private boolean isPublic = false;
-    private GeoLocation userLocation;
+    @Getter private GeoLocation userLocation;
 
     public MeetingBuilderHelper name(String name) {
         this.name = name;
@@ -101,7 +102,7 @@ public class MeetingBuilderHelper {
         return this;
     }
 
-    public MeetingBuilderHelper importance(MeetingImportance importance) {
+    public MeetingBuilderHelper importance(EventSpecialForm importance) {
         this.importance = importance;
         return this;
     }
@@ -154,9 +155,13 @@ public class MeetingBuilderHelper {
                         " is not in the future");
         }
 
-        if (name.length() > 40) {
+        if (name.length() > Event.MAX_NAME_LENGTH) {
             throw new TaskNameTooLongException();
         }
+    }
+
+    public boolean hasPreciseLocation() {
+        return userLocation != null;
     }
 
     public MeetingBuilder convertToBuilder(User user, MeetingContainer parent) {
@@ -232,7 +237,7 @@ public class MeetingBuilderHelper {
                 ", parentUid='" + parentUid + '\'' +
                 ", parentType=" + parentType +
                 ", name='" + name + '\'' +
-                ", startDateTime=" + startDateTime +
+                ", startDateTime=" + startDateTimeInstant +
                 ", eventLocation='" + eventLocation + '\'' +
                 ", includeSubGroups=" + includeSubGroups +
                 ", reminderType=" + reminderType +
@@ -241,6 +246,7 @@ public class MeetingBuilderHelper {
                 ", importance=" + importance +
                 ", assignedMemberUids=" + assignedMemberUids +
                 ", taskImageKey='" + taskImageKey + '\'' +
+                ", userLocation=" + userLocation +
                 '}';
     }
 }

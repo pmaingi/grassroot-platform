@@ -1,16 +1,15 @@
 package za.org.grassroot.services.util;
 
+import lombok.extern.slf4j.Slf4j;
 import net.sf.ehcache.Cache;
+import net.sf.ehcache.CacheException;
 import net.sf.ehcache.CacheManager;
 import net.sf.ehcache.Element;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
-import za.org.grassroot.core.domain.task.Event;
 import za.org.grassroot.core.domain.SafetyEvent;
 import za.org.grassroot.core.domain.User;
-import za.org.grassroot.core.enums.EventType;
+import za.org.grassroot.core.domain.task.Event;
 import za.org.grassroot.core.enums.UserInterfaceType;
 
 import java.util.ArrayList;
@@ -20,57 +19,49 @@ import java.util.List;
 /**
  * Created by aakilomar on 11/2/15.
  */
-@Service
+@Service @Slf4j
 public class CacheUtilManager implements CacheUtilService {
 
-    private Logger log = LoggerFactory.getLogger(CacheUtilManager.class);
+    private final CacheManager cacheManager;
 
     @Autowired
-    CacheManager cacheManager;
+    public CacheUtilManager(CacheManager cacheManager) {
+        this.cacheManager = cacheManager;
+    }
 
     @Override
-    public void clearRsvpCacheForUser(User user, EventType eventType) {
+    public void clearRsvpCacheForUser(String userUid) {
         try {
-            String cacheKey = eventType.toString() + "|" + user.getId();
             Cache cache = cacheManager.getCache("userRSVP");
-            cache.remove(cacheKey);
+            cache.remove(userUid);
         } catch (Exception e) {
-            log.error("FAILED to clear userRSVP..." + user.getId() + " error: " + e.toString());
+            log.error("FAILED to clear userRSVP..." + userUid + " error: " + e.toString());
         }
 
     }
 
     @Override
-    public List<Event> getOutstandingResponseForUser(User user, EventType eventType) {
-        List<Event> outstandingRSVPs = null;
-
+    public List<Event> getOutstandingResponseForUser(String userUid) {
         Cache cache = cacheManager.getCache("userRSVP");
-        String cacheKey = eventType.toString() + "|" + user.getId();
-        log.info("getOutstandingResponseForUser...cacheKey..." + cacheKey);
+        log.info("getOutstandingResponseForUser... anything in cache : {}", cache.isKeyInCache(userUid));
         try {
-            outstandingRSVPs = (List<Event>) cache.get(cacheKey).getObjectValue();
-
-        } catch (Exception e) {
-            log.debug("Could not retrieve outstanding RSVP/Vote from cache  userRSVP for user " + user.getPhoneNumber() + " error: " + e.toString() + " eventType: " + eventType.toString());
+            return cache.isKeyInCache(userUid) ? (List<Event>) cache.get(userUid).getObjectValue() : null;
+        } catch (NullPointerException|ClassCastException e) {
+            return null;
         }
-        return outstandingRSVPs;
     }
 
     @Override
     public List<SafetyEvent> getOutstandingSafetyEventResponseForUser(User user) {
-        List<SafetyEvent> outstandingSafetyEvents = null;
         Cache cache = cacheManager.getCache("userSafetyEvents");
         String cacheKey = user.getUid();
-        try{
-            if(cache.isKeyInCache(cacheKey)) {
-                outstandingSafetyEvents = (List<SafetyEvent>) cache.get(cacheKey).getObjectValue();
-            }
+        try {
+            return cache.isKeyInCache(cacheKey) ? (List<SafetyEvent>) cache.get(cacheKey).getObjectValue() : null;
         }
-        catch (Exception e){
+        catch (NullPointerException|ClassCastException e){
            log.info("Could not retrieve outstanding events for user {}", user.getPhoneNumber());
+           return null;
         }
-
-        return outstandingSafetyEvents;
     }
 
     @Override
@@ -83,7 +74,7 @@ public class CacheUtilManager implements CacheUtilService {
         try{
             safetyEventsUserToRespondTo =(List<SafetyEvent>) cache.get(cacheKey).getObjectValue();
         }
-        catch (Exception e){
+        catch (NullPointerException|ClassCastException e){
             log.info("No list of outstanding safety events to respond to, creating list for user {}", user.getPhoneNumber());
             safetyEventsUserToRespondTo = new ArrayList<>();
         }
@@ -117,15 +108,13 @@ public class CacheUtilManager implements CacheUtilService {
     }
 
     @Override
-    public void putOutstandingResponseForUser(User user, EventType eventType, List<Event> outstandingRSVPs) {
+    public void putOutstandingResponseForUser(String userUid, List<Event> outstandingRSVPs) {
         try {
             Cache cache = cacheManager.getCache("userRSVP");
-            String cacheKey = eventType.toString() + "|" + user.getId();
-            cache.put(new Element(cacheKey,outstandingRSVPs));
-        } catch (Exception e) {
+            cache.put(new Element(userUid,outstandingRSVPs));
+        } catch (CacheException|NullPointerException e) {
             log.error(e.toString());
         }
-
     }
 
     @Override
@@ -145,7 +134,7 @@ public class CacheUtilManager implements CacheUtilService {
         try {
             Cache cache = cacheManager.getCache("userUSSDMenu");
             cache.remove(phoneNumber);
-        } catch (Exception e) {
+        } catch (NullPointerException e) {
             log.error(e.toString());
         }
     }
@@ -158,7 +147,7 @@ public class CacheUtilManager implements CacheUtilService {
         log.info("fetchUssdMenuForUser ...cacheKey... " + phoneNumber);
         try {
             menuToReturn = (String) cache.get(phoneNumber).getObjectValue();
-        } catch (Exception e) {
+        } catch (NullPointerException e) {
             log.debug("Could not find a stored USSD menu for phone number ..." + phoneNumber);
             menuToReturn = null;
         }
@@ -167,11 +156,26 @@ public class CacheUtilManager implements CacheUtilService {
 
     @Override
     public void putUserLanguage(String inputNumber, String language) {
-        try {
-            Cache cache = cacheManager.getCache("user_language");
-            cache.put(new Element(inputNumber, language));
-        } catch (Exception e) {
-            log.error(e.toString());
+        Cache cache = cacheManager.getCache("user_language");
+        cache.put(new Element(inputNumber, language));
+    }
+
+    @Override
+    public void putJoinAttempt(String userUid, int attempt){
+        Cache cache = cacheManager.getCache("user_join_group");
+        cache.put(new Element(userUid,attempt));
+    }
+
+    @Override
+    public int fetchJoinAttempts(String userUid){
+        Cache cache = cacheManager.getCache("user_join_group");
+        Element cacheElement = cache.get(userUid);
+        if (cacheElement != null) {
+            log.debug("found user in cache, returning what's stored");
+            return (int) cache.get(userUid).getObjectValue();
+        } else {
+            log.debug("nothing in cache, returning 0");
+            return 0;
         }
     }
 
@@ -192,6 +196,29 @@ public class CacheUtilManager implements CacheUtilService {
             cache.put(new Element(formSessionKey(userUid, interfaceType), true));
         } catch (Exception e) {
             log.error("Error, could not put cache element!! ... " + e.toString());
+        }
+    }
+
+    @Override
+    public List<PublicActivityLog> getCachedPublicActivity(PublicActivityType activityType) {
+        try {
+            Cache cache = cacheManager.getCache("public_activity_logs");
+            Element cachedElement = cache.get(activityType);
+            return cachedElement == null ? null : (List<PublicActivityLog>) cache.get(activityType).getObjectValue();
+        } catch (NullPointerException|ClassCastException e) {
+            log.error("Error retrieving from cache: {}", e.getMessage());
+            return null;
+        }
+
+    }
+
+    @Override
+    public void putCachedPublicActivity(PublicActivityType activityType, List<PublicActivityLog> activityLogs) {
+        try {
+            Cache cache = cacheManager.getCache("public_activity_logs");
+            cache.put(new Element(activityType, activityLogs));
+        } catch (CacheException e) {
+            log.error("Error putting element in cache");
         }
     }
 

@@ -9,8 +9,8 @@ import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Sort;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 import org.springframework.util.StringUtils;
-import za.org.grassroot.core.domain.Group;
 import za.org.grassroot.core.domain.User;
+import za.org.grassroot.core.domain.group.Group;
 import za.org.grassroot.core.domain.task.Todo;
 import za.org.grassroot.core.domain.task.TodoAssignment;
 import za.org.grassroot.core.domain.task.TodoRequest;
@@ -29,7 +29,6 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 /**
  * Created by luke on 2015/12/18.
- * todo : refactor these to new USSD design
  */
 public class USSDTodoControllerTest extends USSDAbstractUnitTest {
 
@@ -70,7 +69,7 @@ public class USSDTodoControllerTest extends USSDAbstractUnitTest {
         wireUpMessageSourceAndGroupUtil(ussdTodoController);
         ussdTodoController.setGroupUtil(ussdGroupUtil);
         ussdTodoController.setMessageAssembler(ussdMessageAssembler);
-        testUser = new User(testUserPhone,"Test User");
+        testUser = new User(testUserPhone,"Test User", null);
         testGroup = new Group("Test Group",testUser);
         testTodo = new Todo(testUser,testGroup, TodoType.ACTION_REQUIRED,testMessage, Instant.now());
     }
@@ -112,7 +111,7 @@ public class USSDTodoControllerTest extends USSDAbstractUnitTest {
     }
 
     private String saveUrl(String menu, String todoUid, String userInput) {
-        return "/todo" + menu + "?todoUid=" + todoUid + "&priorInput=" + USSDUrlUtil.encodeParameter(userInput);
+        return "todo" + menu + "?todoUid=" + todoUid + "&priorInput=" + USSDUrlUtil.encodeParameter(userInput);
     }
 
     @Test
@@ -254,13 +253,13 @@ public class USSDTodoControllerTest extends USSDAbstractUnitTest {
                 new Todo(testUser, testGroup, TodoType.ACTION_REQUIRED, testMessage, Instant.now()));
 
         Page<Todo> testPage = new PageImpl<>(testTodos);
-        PageRequest testPageRequest = new PageRequest(0, 3, new Sort(Sort.Direction.DESC, "createdDateTime"));
+        PageRequest testPageRequest = PageRequest.of(0, 3, new Sort(Sort.Direction.DESC, "createdDateTime"));
 
         when(userManagementServiceMock.findByInputNumber(testUserPhone,
-                "/todo/existing?page=" + 0 + "&fetchAll=" + true)).thenReturn(testUser);
+                "todo/existing?page=" + 0 + "&fetchAll=" + true)).thenReturn(testUser);
 
         when(todoBrokerMock.fetchPageOfTodosForUser(testUser.getUid(),
-                false,false,testPageRequest)).thenReturn(testPage);
+                false, testPageRequest)).thenReturn(testPage);
 
         mockMvc.perform(get(path + "/existing")
                 .param(phoneParam,testUserPhone)
@@ -295,13 +294,13 @@ public class USSDTodoControllerTest extends USSDAbstractUnitTest {
     public void emailTodoResponsesShouldWork()throws Exception{
         Todo testTodo = new Todo(testUser, testGroup, TodoType.ACTION_REQUIRED, "Some todo subject", Instant.now());
         when(userManagementServiceMock.findByInputNumber(testUserPhone,
-                "/todo/view/email?todoUid=" + testTodo.getUid())).thenReturn(testUser);
+                "todo/view/email?todoUid=" + testTodo.getUid())).thenReturn(testUser);
         mockMvc.perform(get(path + "/view/email")
                 .param(phoneParam,testUserPhone)
                 .param("todoUid",testTodo.getUid()))
                 .andExpect(status().isOk());
         verify(userManagementServiceMock,times(1)).findByInputNumber(testUserPhone,
-                "/todo/view/email?todoUid=" + testTodo.getUid());
+                "todo/view/email?todoUid=" + testTodo.getUid());
     }
 
     @Test
@@ -320,7 +319,7 @@ public class USSDTodoControllerTest extends USSDAbstractUnitTest {
     @Test
     public void markTodoCompletePromptShouldWork()throws Exception{
         when(userManagementServiceMock.findByInputNumber(testUserPhone)).thenReturn(testUser);
-        mockMvc.perform(get(path + "/modify/complete")
+        mockMvc.perform(get(path + "complete/prompt")
                 .param(phoneParam,testUserPhone)
                 .param("todoUid",testTodo.getUid()))
                 .andExpect(status().isOk());
@@ -328,9 +327,9 @@ public class USSDTodoControllerTest extends USSDAbstractUnitTest {
     }
 
     @Test
-    public void markTodoCompleteDoneShouldWork()throws Exception{
+    public void markTodoCompleteDoneShouldWork() throws Exception{
         when(userManagementServiceMock.findByInputNumber(testUserPhone,null)).thenReturn(testUser);
-        mockMvc.perform(get(path + "modify/complete/done")
+        mockMvc.perform(get(path + "complete/done")
                 .param(phoneParam,testUserPhone)
                 .param("todoUid",testTodo.getUid()))
                 .andExpect(status().isOk());
@@ -445,12 +444,12 @@ public class USSDTodoControllerTest extends USSDAbstractUnitTest {
     }
 
     private String saveRequestUrl(String menu, String requestUid, String priorInput) {
-        return "/todo" + menu + "?storedUid=" + requestUid + (priorInput == null ? "" :
+        return "todo" + menu + "?storedUid=" + requestUid + (priorInput == null ? "" :
                 "&priorInput=" + USSDUrlUtil.encodeParameter(priorInput));
     }
 
     private String saveModifyUrl(String modifyMenu, String requestUid, String priorInput) {
-        return "/todo/modify" + modifyMenu + "?requestUid=" + requestUid +
+        return "todo/modify" + modifyMenu + "?requestUid=" + requestUid +
                 (StringUtils.isEmpty(priorInput) ? "" : "&priorInput=" + USSDUrlUtil.encodeParameter(priorInput));
     }
 

@@ -2,9 +2,11 @@ package za.org.grassroot.core.domain.task;
 
 import org.hibernate.annotations.Type;
 import org.springframework.util.StringUtils;
-import za.org.grassroot.core.domain.Group;
+import za.org.grassroot.core.domain.TagHolder;
 import za.org.grassroot.core.domain.User;
+import za.org.grassroot.core.domain.group.Group;
 import za.org.grassroot.core.util.DateTimeUtil;
+import za.org.grassroot.core.util.FormatUtil;
 import za.org.grassroot.core.util.StringArrayUtil;
 import za.org.grassroot.core.util.UIDGenerator;
 
@@ -20,7 +22,8 @@ import java.util.Objects;
  * This class should contain all fields common to both Event and EventRequest entity
  */
 @MappedSuperclass
-public abstract class AbstractEventEntity {
+public abstract class AbstractEventEntity implements TagHolder {
+
 	@Id
 	@GeneratedValue(strategy = GenerationType.IDENTITY)
 	@Column(name = "id", nullable = false)
@@ -32,7 +35,7 @@ public abstract class AbstractEventEntity {
 	@Column(name = "created_date_time", insertable = true, updatable = false)
 	protected Instant createdDateTime;
 
-	@Column(name = "name", length = 40)
+	@Column(name = "name", length = 255)
 	protected String name;
 
 	@Column(name = "description", length = 512)
@@ -106,7 +109,7 @@ public abstract class AbstractEventEntity {
 		this.uid = UIDGenerator.generateId();
 		this.createdDateTime = Instant.now();
 
-		this.name = Objects.requireNonNull(name);
+		this.name = FormatUtil.removeUnwantedCharacters(Objects.requireNonNull(name));
 		this.eventStartDateTime = Objects.requireNonNull(eventStartDateTime);
 		this.createdByUser = Objects.requireNonNull(createdByUser);
 		this.includeSubGroups = includeSubGroups;
@@ -140,7 +143,7 @@ public abstract class AbstractEventEntity {
 	}
 
 	public void setName(String name) {
-		this.name = name;
+		this.name = FormatUtil.removeUnwantedCharacters(Objects.requireNonNull(name));
 	}
 
 	public Instant getEventStartDateTime() {

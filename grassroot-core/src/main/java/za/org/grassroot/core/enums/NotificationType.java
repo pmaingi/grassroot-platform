@@ -13,7 +13,9 @@ public enum NotificationType {
 	GROUP,
 	USER,
 	LIVEWIRE,
-	GENERAL
+	BROADCAST,
+	GENERAL,
+	CAMPAIGN
 
 	//
 }

@@ -1,8 +1,8 @@
 package za.org.grassroot.core.dto.group;
 
 import lombok.Getter;
-import za.org.grassroot.core.domain.Group;
-import za.org.grassroot.core.domain.Membership;
+import za.org.grassroot.core.domain.group.Group;
+import za.org.grassroot.core.domain.group.Membership;
 import za.org.grassroot.core.dto.task.TaskRefDTO;
 import za.org.grassroot.core.enums.TaskType;
 
@@ -16,6 +16,7 @@ public class GroupWebDTO extends GroupMinimalDTO {
 
     private List<GroupRefDTO> subGroups = new ArrayList<>();
     private List<TaskRefDTO> comingUpEvents = new ArrayList<>();
+    private List<String> topics = new ArrayList<>();
 
     public GroupWebDTO(Group group, Membership membership, List<GroupRefDTO> subGroups) {
         super(group, membership);
@@ -36,6 +37,7 @@ public class GroupWebDTO extends GroupMinimalDTO {
                         .collect(Collectors.toList())
         );
 
+        this.topics.addAll(group.getTopics());
 
     }
 }

@@ -5,11 +5,11 @@ import org.junit.Before;
 import org.junit.Test;
 import org.mockito.InjectMocks;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
-import za.org.grassroot.core.domain.Group;
+import za.org.grassroot.core.domain.User;
+import za.org.grassroot.core.domain.group.Group;
+import za.org.grassroot.core.domain.livewire.LiveWireAlert;
 import za.org.grassroot.core.domain.task.Meeting;
 import za.org.grassroot.core.domain.task.MeetingBuilder;
-import za.org.grassroot.core.domain.User;
-import za.org.grassroot.core.domain.livewire.LiveWireAlert;
 import za.org.grassroot.core.enums.LiveWireAlertDestType;
 import za.org.grassroot.core.enums.LiveWireAlertType;
 import za.org.grassroot.core.enums.UserInterfaceType;
@@ -34,8 +34,8 @@ public class USSDLiveWireControllerTest extends USSDAbstractUnitTest {
     private static final String phoneInput = "msisdn";
     //private static final String liveWireMenu = "/ussd/livewire/";
     private static final int pageSize = 3;
-    private User testUser = new User(testPhone, userName);
-    Group groups = new Group("", testUser);
+    private User testUser = new User(testPhone, userName, null);
+    private Group groups = new Group("", testUser);
 
     @InjectMocks
     private USSDLiveWireController ussdLiveWireController;
@@ -331,7 +331,7 @@ public class USSDLiveWireControllerTest extends USSDAbstractUnitTest {
                         "contact/name" + "?alertUid=" + "23" +
                         "&priorInput=" + "1" + "&revising=1");
 
-        when(userManagementServiceMock.loadOrCreateUser("2"))
+        when(userManagementServiceMock.loadOrCreateUser("2", UserInterfaceType.USSD))
                 .thenReturn(testUser);
 
         when(userManagementServiceMock.load("0872345678")).

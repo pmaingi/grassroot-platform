@@ -1,49 +1,56 @@
 package za.org.grassroot.services.task;
 
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Sort;
-import org.springframework.data.jpa.domain.Specifications;
+import org.springframework.data.jpa.domain.Specification;
 import org.springframework.security.access.AccessDeniedException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
 import za.org.grassroot.core.domain.*;
 import za.org.grassroot.core.domain.geo.GeoLocation;
+import za.org.grassroot.core.domain.group.Group;
 import za.org.grassroot.core.domain.notification.*;
 import za.org.grassroot.core.domain.task.*;
 import za.org.grassroot.core.dto.ResponseTotalsDTO;
 import za.org.grassroot.core.enums.*;
 import za.org.grassroot.core.repository.*;
 import za.org.grassroot.core.specifications.EventSpecifications;
+import za.org.grassroot.core.util.AfterTxCommitTask;
 import za.org.grassroot.core.util.DateTimeUtil;
+import za.org.grassroot.integration.graph.GraphBroker;
 import za.org.grassroot.services.MessageAssemblingService;
 import za.org.grassroot.services.PermissionBroker;
-import za.org.grassroot.services.account.AccountGroupBroker;
+import za.org.grassroot.services.account.AccountFeaturesBroker;
 import za.org.grassroot.services.exception.AccountLimitExceededException;
 import za.org.grassroot.services.exception.EventStartTimeNotInFutureException;
 import za.org.grassroot.services.exception.TaskNameTooLongException;
 import za.org.grassroot.services.geo.GeoLocationBroker;
 import za.org.grassroot.services.task.enums.EventListTimeType;
+import za.org.grassroot.services.user.PasswordTokenService;
+import za.org.grassroot.services.user.UserManagementService;
 import za.org.grassroot.services.util.CacheUtilService;
 import za.org.grassroot.services.util.LogsAndNotificationsBroker;
 import za.org.grassroot.services.util.LogsAndNotificationsBundle;
 
 import javax.persistence.EntityManager;
 import javax.persistence.Tuple;
+import javax.persistence.TypedQuery;
 import javax.persistence.criteria.CriteriaBuilder;
 import javax.persistence.criteria.CriteriaQuery;
 import javax.persistence.criteria.Root;
 import java.time.Duration;
 import java.time.Instant;
 import java.time.LocalDateTime;
+import java.time.LocalTime;
 import java.time.temporal.ChronoUnit;
 import java.util.*;
-import java.util.function.Predicate;
+import java.util.function.Function;
 import java.util.stream.Collectors;
 
 import static za.org.grassroot.core.domain.task.EventReminderType.CUSTOM;
@@ -52,40 +59,42 @@ import static za.org.grassroot.core.enums.EventLogType.*;
 import static za.org.grassroot.core.util.DateTimeUtil.convertToSystemTime;
 import static za.org.grassroot.core.util.DateTimeUtil.getSAST;
 
-@Service
+@Service @Slf4j
 public class EventBrokerImpl implements EventBroker {
-
-	private final Logger logger = LoggerFactory.getLogger(EventBrokerImpl.class);
 
 	@Value("${grassroot.events.limit.enabled:false}")
 	private boolean eventMonthlyLimitActive;
 
+	private final UserManagementService userService;
 	private final EventLogBroker eventLogBroker;
 	private final EventRepository eventRepository;
 	private final VoteRepository voteRepository;
 	private final MeetingRepository meetingRepository;
 	private final UidIdentifiableRepository uidIdentifiableRepository;
-	private final UserRepository userRepository;
 	private final GroupRepository groupRepository;
 	private final PermissionBroker permissionBroker;
 	private final LogsAndNotificationsBroker logsAndNotificationsBroker;
 	private final CacheUtilService cacheUtilService;
 	private final MessageAssemblingService messageAssemblingService;
-	private final AccountGroupBroker accountGroupBroker;
+	private final AccountFeaturesBroker accountFeaturesBroker;
 	private final GeoLocationBroker geoLocationBroker;
 	private final TaskImageBroker taskImageBroker;
 
 	private final EntityManager entityManager;
 
+	private PasswordTokenService tokenService;
+	private ApplicationEventPublisher applicationEventPublisher;
+	private GraphBroker graphBroker;
+
 	@Autowired
-	public EventBrokerImpl(MeetingRepository meetingRepository, EventLogBroker eventLogBroker, EventRepository eventRepository, VoteRepository voteRepository, UidIdentifiableRepository uidIdentifiableRepository, UserRepository userRepository, AccountGroupBroker accountGroupBroker, GroupRepository groupRepository, PermissionBroker permissionBroker, LogsAndNotificationsBroker logsAndNotificationsBroker, CacheUtilService cacheUtilService, MessageAssemblingService messageAssemblingService, MeetingLocationRepository meetingLocationRepository, GeoLocationBroker geoLocationBroker, TaskImageBroker taskImageBroker,EntityManager entityManager) {
+	public EventBrokerImpl(MeetingRepository meetingRepository, EventLogBroker eventLogBroker, EventRepository eventRepository, VoteRepository voteRepository, UidIdentifiableRepository uidIdentifiableRepository, UserManagementService userService, AccountFeaturesBroker accountFeaturesBroker, GroupRepository groupRepository, PermissionBroker permissionBroker, LogsAndNotificationsBroker logsAndNotificationsBroker, CacheUtilService cacheUtilService, MessageAssemblingService messageAssemblingService, GeoLocationBroker geoLocationBroker, TaskImageBroker taskImageBroker, EntityManager entityManager) {
 		this.meetingRepository = meetingRepository;
 		this.eventLogBroker = eventLogBroker;
 		this.eventRepository = eventRepository;
 		this.voteRepository = voteRepository;
 		this.uidIdentifiableRepository = uidIdentifiableRepository;
-		this.userRepository = userRepository;
-		this.accountGroupBroker = accountGroupBroker;
+		this.userService = userService;
+		this.accountFeaturesBroker = accountFeaturesBroker;
 		this.groupRepository = groupRepository;
 		this.permissionBroker = permissionBroker;
 		this.logsAndNotificationsBroker = logsAndNotificationsBroker;
@@ -96,6 +105,22 @@ public class EventBrokerImpl implements EventBroker {
 		this.entityManager = entityManager;
 	}
 
+	@Autowired
+	public void setTokenService(PasswordTokenService tokenService) {
+		this.tokenService = tokenService;
+	}
+
+	// almost certainly there's a better way to do both of these
+	@Autowired(required = false)
+	public void setGraphBroker(GraphBroker graphBroker) {
+		this.graphBroker = graphBroker;
+	}
+
+	@Autowired(required = false)
+	public void setApplicationEventPublisher(ApplicationEventPublisher applicationEventPublisher) {
+		this.applicationEventPublisher = applicationEventPublisher;
+	}
+
 	@Override
 	public Event load(String eventUid) {
 		Objects.requireNonNull(eventUid);
@@ -104,21 +129,23 @@ public class EventBrokerImpl implements EventBroker {
 
 	@Override
 	public Meeting loadMeeting(String meetingUid) {
+		log.info("looking for meeting with UID: {}", meetingUid);
 		return meetingRepository.findOneByUid(meetingUid);
 	}
 
-
 	@Override
 	@Transactional
-	public Meeting createMeeting(MeetingBuilderHelper helper) {
+	public Meeting createMeeting(MeetingBuilderHelper helper, UserInterfaceType channel) {
 		helper.validateMeetingFields();
 
-		User user = userRepository.findOneByUid(helper.getUserUid());
+		User user = userService.load(helper.getUserUid());
 		MeetingContainer parent = uidIdentifiableRepository.findOneByUid(MeetingContainer.class,
 				helper.getParentType(), helper.getParentUid());
 
-		Event possibleDuplicate = checkForDuplicate(helper.getUserUid(), helper.getParentUid(), helper.getName(), helper.getStartInstant());
+		Event possibleDuplicate = checkForDuplicate(helper.getUserUid(), helper.getParentUid(),
+                helper.getName(), helper.getStartInstant(), helper.getAssignedMemberUids());
 		if (possibleDuplicate != null) { // todo : hand over to update meeting if anything different in parameters
+			log.info("detected a duplicate meeting, subject {}, returning it", helper.getName());
 			return (Meeting) possibleDuplicate;
 		}
 
@@ -126,36 +153,88 @@ public class EventBrokerImpl implements EventBroker {
 		permissionBroker.validateGroupPermission(user, parent.getThisOrAncestorGroup(), Permission.GROUP_PERMISSION_CREATE_GROUP_MEETING);
 
 		Meeting meeting = helper.convertToBuilder(user, parent).createMeeting();
+		meeting = setReminder(meeting, helper);
+
+		log.info("Created meeting, with importance={}, reminder type={} and time={}", meeting.getSpecialForm(), meeting.getReminderType(), meeting.getScheduledReminderTime());
+
+		meetingRepository.save(meeting);
+
+		meeting = checkForAndSetImage(meeting, helper);
+
+		LogsAndNotificationsBundle bundle = createMeetingBundle(meeting, user);
+		logsAndNotificationsBroker.storeBundle(bundle);
+
+		generateResponseTokens(meeting);
+
+		log.info("called store bundle, exiting create mtg method ... triggering graph if enabled");
+		if (graphBroker != null && applicationEventPublisher != null) {
+			applicationEventPublisher.publishEvent(addToGraph(meeting));
+		}
+
+		log.info("also recording a meeting location, if appropriate options set, etc. Do we have one? : {}", helper.hasPreciseLocation());
+		if (helper.hasPreciseLocation() && applicationEventPublisher != null) {
+			log.info("We have locations, recording it: {}", helper.getUserLocation());
+			applicationEventPublisher.publishEvent(addEventLocation(meeting.getUid(), helper.getUserLocation(), channel));
+		}
+
+		return meeting;
+	}
+
+	private AfterTxCommitTask addToGraph(Meeting meeting) {
+		return () -> {
+			List<String> assignedUids = meeting.getMembers().stream().map(User::getUid).collect(Collectors.toList());
+			graphBroker.addTaskToGraph(meeting.getUid(), meeting.getTaskType(), assignedUids);
+			graphBroker.annotateTask(meeting.getUid(), meeting.getTaskType(), null, null, true);
+		};
+	}
+
+	private AfterTxCommitTask addEventLocation(String eventUid, GeoLocation location, UserInterfaceType sourceInterface) {
+		return () -> {
+			geoLocationBroker.calculateMeetingLocationInstant(eventUid, location, sourceInterface);
+		};
+	}
+
+	private Meeting setReminder(Meeting meeting, MeetingBuilderHelper helper) {
 		// else sometimes reminder setting will be in the past, causing duplication of meetings; defaulting to 1 hours
-		logger.debug("helper reminder type: {}, meeting scheduled reminder time: {}", helper.getReminderType(), meeting.getScheduledReminderTime());
-		if (!helper.getReminderType().equals(DISABLED) && meeting.getScheduledReminderTime().isBefore(Instant.now())) {
+		if (!helper.getReminderType().equals(DISABLED) &&
+				meeting.getScheduledReminderTime() != null &&
+				meeting.getScheduledReminderTime().isBefore(Instant.now())) {
 			meeting.setCustomReminderMinutes(60);
 			meeting.setReminderType(CUSTOM);
 			meeting.updateScheduledReminderTime();
 		}
+		return meeting;
+	}
 
-		logger.info("Created meeting, with importance={}, reminder type={} and time={}", meeting.getImportance(), meeting.getReminderType(), meeting.getScheduledReminderTime());
-
-		meetingRepository.save(meeting);
-
-		eventLogBroker.rsvpForEvent(meeting.getUid(), meeting.getCreatedByUser().getUid(), EventRSVPResponse.YES);
-
-		LogsAndNotificationsBundle bundle = new LogsAndNotificationsBundle();
-		EventLog eventLog = new EventLog(user, meeting, CREATED);
-		bundle.addLog(eventLog);
-
+	private Meeting checkForAndSetImage(Meeting meeting, MeetingBuilderHelper helper) {
 		if (!StringUtils.isEmpty(helper.getTaskImageKey())) {
 			taskImageBroker.recordImageForTask(helper.getUserUid(), meeting.getUid(), TaskType.MEETING,
-					helper.getTaskImageKey(), EventLogType.IMAGE_AT_CREATION);
+					Collections.singleton(helper.getTaskImageKey()), EventLogType.IMAGE_AT_CREATION, null);
 			meeting.setImageUrl(taskImageBroker.getShortUrl(helper.getTaskImageKey()));
 		}
-
-		Set<Notification> notifications = constructEventInfoNotifications(meeting, eventLog, meeting.getMembers());
-		bundle.addNotifications(notifications);
-
-		logsAndNotificationsBroker.storeBundle(bundle);
-
 		return meeting;
+	}
+
+	private LogsAndNotificationsBundle createMeetingBundle(Meeting meeting, User user) {
+		LogsAndNotificationsBundle bundle = new LogsAndNotificationsBundle();
+		cacheUtilService.clearRsvpCacheForUser(user.getUid());
+		EventLog meetingCreatedLog = new EventLog(user, meeting, CREATED);
+		EventLog creatingUserRsvpLog = new EventLog(user, meeting, EventLogType.RSVP, EventRSVPResponse.YES);
+		bundle.addLog(meetingCreatedLog);
+		bundle.addLog(creatingUserRsvpLog);
+		Set<Notification> notifications = constructEventInfoNotifications(meeting, meetingCreatedLog, meeting.getMembers());
+		bundle.addNotifications(notifications);
+		return bundle;
+	}
+
+	@SuppressWarnings("unchecked")
+	private void generateResponseTokens(Event event) {
+		Set<User> users = (Set<User>) event.getMembers();
+		Set<String> emailMemberUids = users.stream().filter(User::areNotificationsByEmail)
+				.map(User::getUid).collect(Collectors.toSet());
+		if (!emailMemberUids.isEmpty()) {
+			tokenService.generateResponseTokens(emailMemberUids, event.getAncestorGroup().getUid(), event.getUid());
+		}
 	}
 
 	@Override
@@ -164,43 +243,59 @@ public class EventBrokerImpl implements EventBroker {
 	}
 
 	private void checkForEventLimit(String parentUid) {
-		if (eventMonthlyLimitActive && accountGroupBroker.numberEventsLeftForGroup(parentUid) < 1) {
+		if (eventMonthlyLimitActive && accountFeaturesBroker.numberEventsLeftForGroup(parentUid) < 1) {
 			throw new AccountLimitExceededException();
 		}
 	}
 
 	// introducing so that we can check catch & handle duplicate requests (e.g., from malfunctions on Android client offline->queue->sync function)
-	private Event checkForDuplicate(String userUid, String parentGroupUid, String name, Instant startDateTime) {
+    @SuppressWarnings("unchecked") // the getAssignedMembers has a strange behavior on type check warnings, hence suppressing
+    private Event checkForDuplicate(String userUid, String parentGroupUid, String name, Instant startDateTime, Set<String> assignedMemberUids) {
 		Objects.requireNonNull(userUid);
 		Objects.requireNonNull(parentGroupUid);
 		Objects.requireNonNull(name);
 		Objects.requireNonNull(startDateTime);
 
-		Instant intervalStart = startDateTime.minus(180, ChronoUnit.SECONDS);;
+		Instant intervalStart = startDateTime.minus(180, ChronoUnit.SECONDS);
 		Instant intervalEnd = startDateTime.plus(180, ChronoUnit.SECONDS);
 
-		User user = userRepository.findOneByUid(userUid);
+		User user = userService.load(userUid);
 		Group parentGroup = groupRepository.findOneByUid(parentGroupUid);
 
-		return eventRepository.findOneByCreatedByUserAndParentGroupAndNameAndEventStartDateTimeBetweenAndCanceledFalse(user, parentGroup, name, intervalStart, intervalEnd);
+		Event possibleEvent = eventRepository.findOneByCreatedByUserAndParentGroupAndNameAndEventStartDateTimeBetweenAndCanceledFalse(user, parentGroup, name, intervalStart, intervalEnd);
+		if (possibleEvent == null)
+		    return null;
+
+		boolean priorHasAssigned = !possibleEvent.isAllGroupMembersAssigned();
+		boolean newHasAssigned = assignedMemberUids != null && !assignedMemberUids.isEmpty();
+
+		if (!priorHasAssigned && !newHasAssigned) {
+		    return possibleEvent;
+        } else if (priorHasAssigned && newHasAssigned) {
+		    Set<User> users = possibleEvent.getAssignedMembers();
+		    Set<String> priorUids = users.stream().map(User::getUid).collect(Collectors.toSet());
+		    return priorUids.equals(assignedMemberUids) ? possibleEvent : null;
+        } else {
+		    return null; // because they must be different, by definition (one is full assigned, other is not)
+        }
 	}
 
 	private Set<Notification> constructEventInfoNotifications(Event event, EventLog eventLog, Set<User> usersToNotify) {
 		Set<Notification> notifications = new HashSet<>();
-		logger.debug("constructing event notifications ... has image URL? : {}", event.getImageUrl());
+		log.debug("constructing event notifications ... has image URL? : {}", event.getImageUrl());
 		for (User member : usersToNotify) {
-			cacheUtilService.clearRsvpCacheForUser(member, event.getEventType());
+			cacheUtilService.clearRsvpCacheForUser(member.getUid());
 			String message = messageAssemblingService.createEventInfoMessage(member, event);
 			Notification notification = new EventInfoNotification(member, message, eventLog);
 			notifications.add(notification);
 		}
 		// check if creating user is on Android, in which case, add an explicit SMS
-		if (event.getCreatedByUser().getMessagingPreference().equals(UserMessagingPreference.ANDROID_APP)) {
-			logger.debug("event creator on Android, sending an SMS so they know format");
+		if (event.getCreatedByUser().getMessagingPreference().equals(DeliveryRoute.ANDROID_APP)) {
+			log.debug("event creator on Android, sending an SMS so they know format");
 			User creator = event.getCreatedByUser();
 			String creatorMessage = messageAssemblingService.createEventInfoMessage(creator, event);
 			Notification smsNotification = new EventInfoNotification(creator, creatorMessage, eventLog);
-			smsNotification.setDeliveryChannel(UserMessagingPreference.SMS);
+			smsNotification.setDeliveryChannel(DeliveryRoute.SMS);
 			notifications.add(smsNotification);
 		}
 		return notifications;
@@ -217,7 +312,7 @@ public class EventBrokerImpl implements EventBroker {
 		Objects.requireNonNull(userUid);
         Objects.requireNonNull(meetingUid);
 
-		User user = userRepository.findOneByUid(userUid);
+		User user = userService.load(userUid);
         Meeting meeting = (Meeting) eventRepository.findOneByUid(meetingUid);
 
         boolean meetingChanged = false;
@@ -231,7 +326,7 @@ public class EventBrokerImpl implements EventBroker {
 			throw new AccessDeniedException("Error! Only meeting caller can change meeting");
 		}
 
-		if (!StringUtils.isEmpty(name) && name.length() > 40) {
+		if (!StringUtils.isEmpty(name) && name.length() > Event.MAX_NAME_LENGTH) {
 			throw new TaskNameTooLongException();
 		}
 
@@ -239,10 +334,10 @@ public class EventBrokerImpl implements EventBroker {
         if (eventStartDateTime != null) {
 			Instant convertedStartDateTime = convertToSystemTime(eventStartDateTime, getSAST());
 			Duration timeBetween = Duration.between(convertedStartDateTime, meeting.getEventStartDateTime());
-			logger.info("duration between old and new dates and times: {} seconds", timeBetween.getSeconds());
+			log.info("duration between old and new dates and times: {} seconds", timeBetween.getSeconds());
 			startTimeChanged = Math.abs(timeBetween.getSeconds()) > 90; // since otherwise pick up spurious non-equals because of small instant changes
 			if (startTimeChanged) {
-				logger.info("start time changed! to : " + convertedStartDateTime);
+				log.info("start time changed! to : " + convertedStartDateTime);
 				validateEventStartTime(convertedStartDateTime);
 				meeting.setEventStartDateTime(convertedStartDateTime);
 				meeting.updateScheduledReminderTime();
@@ -253,13 +348,13 @@ public class EventBrokerImpl implements EventBroker {
 		}
 
         if (!StringUtils.isEmpty(name) && !meeting.getName().equals(name)) {
-        	logger.info("Meeting title changed!");
+        	log.info("Meeting title changed!");
         	meeting.setName(name);
         	meetingChanged = true;
 		}
 
         if (!StringUtils.isEmpty(eventLocation) && !meeting.getEventLocation().equals(eventLocation)) {
-			logger.info("Meeting location changed!");
+			log.info("Meeting location changed!");
         	meeting.setEventLocation(eventLocation);
 			meetingChanged = true;
 		}
@@ -290,7 +385,7 @@ public class EventBrokerImpl implements EventBroker {
 		Objects.requireNonNull(eventStartDateTime);
 		Objects.requireNonNull(eventLocation);
 
-		User user = userRepository.findOneByUid(userUid);
+		User user = userService.load(userUid);
 		Meeting meeting = (Meeting) eventRepository.findOneByUid(meetingUid);
 
 		if (meeting.isCanceled()) {
@@ -302,7 +397,7 @@ public class EventBrokerImpl implements EventBroker {
 			throw new AccessDeniedException("Error! Only meeting caller or group organizer can change meeting");
 		}
 
-		if (name.length() > 40) {
+		if (name.length() > Event.MAX_NAME_LENGTH) {
 			throw new TaskNameTooLongException();
 		}
 
@@ -351,7 +446,7 @@ public class EventBrokerImpl implements EventBroker {
 	}
 
 	private Set<Notification> constructEventChangedNotifications(Event event, EventLog eventLog, boolean startTimeChanged) {
-		Set<User> rsvpWithNoMembers = new HashSet<>(userRepository.findUsersThatRSVPNoForEvent(event));
+		Set<User> rsvpWithNoMembers = new HashSet<>(userService.findUsersThatRsvpForEvent(event, EventRSVPResponse.NO));
 		return getAllEventMembers(event).stream()
 				.filter(member -> startTimeChanged || !rsvpWithNoMembers.contains(member))
 				.map(member -> {
@@ -363,46 +458,64 @@ public class EventBrokerImpl implements EventBroker {
 
 	@Override
 	@Transactional
-	public Vote createVote(String userUid, String parentUid, JpaEntityType parentType, String name, LocalDateTime eventStartDateTime,
-                           boolean includeSubGroups, String description, Set<String> assignMemberUids, List<String> options) {
-		Objects.requireNonNull(userUid);
-		Objects.requireNonNull(parentUid);
-		Objects.requireNonNull(parentType);
+	public Vote createVote(VoteHelper helper) {
+		Objects.requireNonNull(helper.getUserUid());
+		Objects.requireNonNull(helper.getParentUid());
+		Objects.requireNonNull(helper.getParentType());
+		Objects.requireNonNull(helper.getName());
 
-		Instant convertedClosingDateTime = convertToSystemTime(eventStartDateTime, getSAST());
+		Instant convertedClosingDateTime = convertToSystemTime(helper.getEventStartDateTime(), getSAST());
         validateEventStartTime(convertedClosingDateTime);
 
-		User user = userRepository.findOneByUid(userUid);
-		VoteContainer parent = uidIdentifiableRepository.findOneByUid(VoteContainer.class, parentType, parentUid);
+		User user = userService.load(helper.getUserUid());
+		VoteContainer parent = uidIdentifiableRepository.findOneByUid(VoteContainer.class, helper.getParentType(), helper.getParentUid());
 
 		permissionBroker.validateGroupPermission(user, parent.getThisOrAncestorGroup(), Permission.GROUP_PERMISSION_CREATE_GROUP_VOTE);
 
-		if (parentType.equals(JpaEntityType.GROUP)) {
-			Event possibleDuplicate = checkForDuplicate(userUid, parentUid, name, convertedClosingDateTime);
+		if (JpaEntityType.GROUP.equals(helper.getParentType())) {
+			Event possibleDuplicate = checkForDuplicate(helper.getUserUid(), helper.getParentUid(),
+					helper.getName(), convertedClosingDateTime, helper.getAssignMemberUids());
 			if (possibleDuplicate != null && possibleDuplicate.getEventType().equals(EventType.VOTE)) {
-				logger.info("Detected duplicate vote creation, returning the already-created one ... ");
+				log.info("Detected duplicate vote creation, returning the already-created one ... ");
 				return (Vote) possibleDuplicate;
 			}
 
-			if (eventMonthlyLimitActive && accountGroupBroker.numberEventsLeftForGroup(parentUid) < 1) {
+			if (eventMonthlyLimitActive && accountFeaturesBroker.numberEventsLeftForGroup(helper.getParentUid()) < 1) {
 				throw new AccountLimitExceededException();
 			}
 		}
 
-		if (name.length() > 40) {
+		if (helper.getName().length() > Event.MAX_NAME_LENGTH) {
 			throw new TaskNameTooLongException();
 		}
 
-		Vote vote = new Vote(name, convertedClosingDateTime, user, parent, includeSubGroups, description);
+		Vote vote = new Vote(helper.getName(), convertedClosingDateTime, user, parent, helper.isIncludeSubGroups(), helper.getDescription());
+		Set<String> assignMemberUids = helper.getAssignMemberUids();
 		if (assignMemberUids != null && !assignMemberUids.isEmpty()) {
-			assignMemberUids.add(userUid); // enforce creating user part of vote
+			assignMemberUids.add(helper.getUserUid()); // enforce creating user part of vote
 		}
 		vote.assignMembers(assignMemberUids);
+
+		List<String> options = helper.getOptions();
 		if (options != null && !options.isEmpty()) {
 			vote.setVoteOptions(options);
 		}
 
+		if (!EventSpecialForm.ORDINARY.equals(helper.getSpecialForm())) {
+			vote.setSpecialForm(helper.getSpecialForm());
+		}
+
+		if (helper.isRandomizeOptions()) {
+			vote.setRandomize(true);
+		}
+
 		voteRepository.save(vote);
+
+		if (!StringUtils.isEmpty(helper.getTaskImageKey())) {
+			taskImageBroker.recordImageForTask(helper.getUserUid(), vote.getUid(), TaskType.VOTE,
+					Collections.singleton(helper.getTaskImageKey()), EventLogType.IMAGE_AT_CREATION, null);
+			vote.setImageUrl(taskImageBroker.getShortUrl(helper.getTaskImageKey()));
+		}
 
 		LogsAndNotificationsBundle bundle = new LogsAndNotificationsBundle();
 
@@ -414,72 +527,15 @@ public class EventBrokerImpl implements EventBroker {
 
 		logsAndNotificationsBroker.storeBundle(bundle);
 
+		generateResponseTokens(vote);
+
+		if (graphBroker != null) {
+			List<String> assignedUids = vote.getMembers().stream().map(User::getUid).collect(Collectors.toList());
+			graphBroker.addTaskToGraph(vote.getUid(), vote.getTaskType(), assignedUids);
+			graphBroker.annotateTask(vote.getUid(), vote.getTaskType(), null, null, true);
+		}
+
 		return vote;
-	}
-
-	@Override
-	@Transactional
-	public Vote updateVote(String userUid, String voteUid, LocalDateTime eventStartDateTime, String description) {
-		Objects.requireNonNull(userUid);
-		Objects.requireNonNull(voteUid);
-
-		User user = userRepository.findOneByUid(userUid);
-		Vote vote = voteRepository.findOneByUid(voteUid);
-
-		if (vote.isCanceled()) {
-			throw new IllegalStateException("Vote is canceled: " + vote);
-		}
-
-		if (!vote.getCreatedByUser().equals(user)) {
-			throw new AccessDeniedException("Error! Only user who created vote can update it");
-		}
-
-		Instant convertedClosingDateTime = convertToSystemTime(eventStartDateTime, getSAST());
-
-		boolean startTimeChanged = !vote.getEventStartDateTime().equals(convertedClosingDateTime);
-		if (startTimeChanged) {
-			validateEventStartTime(convertedClosingDateTime);
-			vote.setEventStartDateTime(convertedClosingDateTime);
-			vote.updateScheduledReminderTime();
-		}
-
-		vote.setDescription(description);
-
-		// note: as of now, we don't need to send anything, hence just do an explicit call to repo and return the Vote
-
-		Vote savedVote = voteRepository.save(vote);
-
-		LogsAndNotificationsBundle bundle = new LogsAndNotificationsBundle();
-
-		EventLog eventLog = new EventLog(user, vote, CHANGE, null, startTimeChanged);
-		bundle.addLog(eventLog);
-
-		logsAndNotificationsBroker.storeBundle(bundle);
-
-		return savedVote;
-	}
-
-	@Override
-	@Transactional
-	public void updateVoteClosingTime(String userUid, String eventUid, LocalDateTime closingDateTime) {
-    	Objects.requireNonNull(userUid);
-    	Objects.requireNonNull(eventUid);
-    	Objects.requireNonNull(closingDateTime);
-
-    	Event event = eventRepository.findOneByUid(eventUid);
-    	User user = userRepository.findOneByUid(userUid);
-
-    	if (!event.getCreatedByUser().equals(user)) {
-    		throw new AccessDeniedException("Only vote caller can change closing date time");
-		}
-
-		Instant convertedClosing = DateTimeUtil.convertToSystemTime(closingDateTime, DateTimeUtil.getSAST());
-    	if (convertedClosing.isBefore(Instant.now())) {
-    		throw new EventStartTimeNotInFutureException("Error! Vote changing to past");
-		}
-
-		event.setEventStartDateTime(convertedClosing);
-    	event.updateScheduledReminderTime();
 	}
 
 	@Override
@@ -490,7 +546,7 @@ public class EventBrokerImpl implements EventBroker {
         Objects.requireNonNull(reminderType);
 
         Event event = eventRepository.findOneByUid(eventUid);
-		User user = userRepository.findOneByUid(userUid);
+		User user = userService.load(userUid);
 
 		if (!event.getCreatedByUser().equals(user)) {
 			throw new AccessDeniedException("Error! Only the event creator can adjust settings");
@@ -508,23 +564,7 @@ public class EventBrokerImpl implements EventBroker {
         }
     }
 
-    @Override
-	@Transactional
-    public void updateDescription(String userUid, String eventUid, String eventDescription) {
-        Objects.requireNonNull(userUid);
-        Objects.requireNonNull(eventUid);
-
-        Event event = eventRepository.findOneByUid(eventUid);
-        User user = userRepository.findOneByUid(userUid);
-
-        if (!event.getCreatedByUser().equals(user)) {
-        	throw new AccessDeniedException("Error! Only the user who created the meeting can change its description");
-		}
-
-		event.setDescription(eventDescription);
-    }
-
-    private void validateEventStartTime(Instant eventStartDateTimeInstant) {
+	private void validateEventStartTime(Instant eventStartDateTimeInstant) {
 		Instant now = Instant.now();
 		if (!eventStartDateTimeInstant.isAfter(now)) {
 			throw new EventStartTimeNotInFutureException("Event start time " + eventStartDateTimeInstant.toString() +
@@ -534,11 +574,11 @@ public class EventBrokerImpl implements EventBroker {
 
 	@Override
 	@Transactional
-	public void cancel(String userUid, String eventUid) {
+	public void cancel(String userUid, String eventUid, boolean notifyMembers) {
 		Objects.requireNonNull(userUid);
 		Objects.requireNonNull(eventUid);
 
-		User user = userRepository.findOneByUid(userUid);
+		User user = userService.load(userUid);
 		Event event = eventRepository.findOneByUid(eventUid);
 
 		if (event.isCanceled()) {
@@ -558,13 +598,13 @@ public class EventBrokerImpl implements EventBroker {
 		EventLog eventLog = new EventLog(user, event, CANCELLED);
 		bundle.addLog(eventLog);
 
-		List<User> rsvpWithNoMembers = userRepository.findUsersThatRSVPNoForEvent(event);
-		for (User member : getAllEventMembers(event)) {
-			if (!rsvpWithNoMembers.contains(member)) {
+		if (notifyMembers) {
+			List<User> rsvpWithNoMembers = userService.findUsersThatRsvpForEvent(event, EventRSVPResponse.NO);
+			getAllEventMembers(event).stream().filter(member -> !rsvpWithNoMembers.contains(member)).forEach(member -> {
 				String message = messageAssemblingService.createEventCancelledMessage(member, event);
 				Notification notification = new EventCancelledNotification(member, message, eventLog);
 				bundle.addNotification(notification);
-			}
+			});
 		}
 
 		logsAndNotificationsBroker.storeBundle(bundle);
@@ -572,14 +612,13 @@ public class EventBrokerImpl implements EventBroker {
 
 	@Override
 	@Transactional
-	public void sendScheduledReminder(String uid) {
-		Objects.requireNonNull(uid);
-
-		Event event = eventRepository.findOneByUid(uid);
+	public void sendScheduledReminder(String eventUid) {
+		Event event = eventRepository.findOneByUid(Objects.requireNonNull(eventUid));
 
 		if (event.isCanceled()) {
 			throw new IllegalStateException("Event is canceled: " + event);
 		}
+
 		if (!event.isScheduledReminderActive()) {
 			throw new IllegalStateException("Event is not scheduled for reminder: " + event);
 		}
@@ -594,11 +633,11 @@ public class EventBrokerImpl implements EventBroker {
 		EventLog eventLog = new EventLog(null, event, REMINDER);
 
 		Set<User> excludedMembers = findEventReminderExcludedMembers(event);
-		List<User> eventReminderNotificationSentMembers = userRepository.findNotificationTargetsForEvent(
-				event, EventReminderNotification.class);
+		List<User> eventReminderNotificationSentMembers = userService.findUsersNotifiedAboutEvent(event, EventReminderNotification.class);
 		excludedMembers.addAll(eventReminderNotificationSentMembers);
 
-		for (User member : getAllEventMembers(event)) {
+		final Set<User> members = getAllEventMembers(event);
+		for (User member : members) {
 			if (!excludedMembers.contains(member)) {
 				String notificationMessage = messageAssemblingService.createScheduledEventReminderMessage(member, event);
 				Notification notification = new EventReminderNotification(member, notificationMessage, eventLog);
@@ -614,22 +653,34 @@ public class EventBrokerImpl implements EventBroker {
 		// for meeting calls, send out RSVPs to date to meeting's creator
 		if (event.getEventType().equals(EventType.MEETING) && event.isRsvpRequired()) {
 			Meeting meeting = (Meeting) event;
-
 			LogsAndNotificationsBundle meetingRsvpTotalsBundle = constructMeetingRsvpTotalsBundle(meeting);
 			bundle.addBundle(meetingRsvpTotalsBundle);
 		}
 
+		addLanguageNotifications(members, bundle);
+
 		logsAndNotificationsBroker.storeBundle(bundle);
+	}
+
+	private void addLanguageNotifications(Collection<User> users, LogsAndNotificationsBundle bundle) {
+		final String languageMessage = messageAssemblingService.createMultiLanguageMessage();
+		users.stream().filter(userService::shouldSendLanguageText)
+				.forEach(user -> {
+					log.info("Notifying a user about multiple languages ...");
+					UserLog userLog = new UserLog(user.getUid(), UserLogType.NOTIFIED_LANGUAGES, null, UserInterfaceType.SYSTEM);
+					bundle.addLog(userLog);
+					bundle.addNotification(new UserLanguageNotification(user, languageMessage, userLog));
+				});
 	}
 
 	private Set<User> findEventReminderExcludedMembers(Event event) {
 		Set<User> excludedMembers = new HashSet<>();
 		if (event.getEventType().equals(EventType.VOTE)) {
-			List<User> votedMembers = userRepository.findUsersThatRSVPForEvent(event);
+			List<User> votedMembers = userService.findUsersThatRsvpForEvent(event, null);
 			excludedMembers.addAll(votedMembers);
 		}
 		if (event.getEventType().equals(EventType.MEETING)) {
-			List<User> meetingDeclinedMembers = userRepository.findUsersThatRSVPNoForEvent(event);
+			List<User> meetingDeclinedMembers = userService.findUsersThatRsvpForEvent(event, EventRSVPResponse.NO);
 			excludedMembers.addAll(meetingDeclinedMembers);
 		}
 		return excludedMembers;
@@ -656,14 +707,14 @@ public class EventBrokerImpl implements EventBroker {
 	public void sendManualReminder(String userUid, String eventUid) {
 		Objects.requireNonNull(eventUid);
 
-		User user = userRepository.findOneByUid(userUid);
+		User user = userService.load(userUid);
 
 		Event event = eventRepository.findOneByUid(eventUid);
 		if (event.isCanceled()) {
 			throw new IllegalStateException("Event is canceled: " + event);
 		}
 
-		logger.info("Sending manual reminder for event {} with message {}", event);
+		log.info("Sending manual reminder for event {} with message {}", event);
 		event.setNoRemindersSent(event.getNoRemindersSent() + 1);
 
 		LogsAndNotificationsBundle bundle = new LogsAndNotificationsBundle();
@@ -719,9 +770,9 @@ public class EventBrokerImpl implements EventBroker {
 		EventLog eventLog = new EventLog(null, meeting, THANK_YOU_MESSAGE);
 
 		Set<User> tankYouNotificationSentMembers = new HashSet<>(
-				userRepository.findNotificationTargetsForEvent(meeting, MeetingThankYouNotification.class));
+				userService.findUsersNotifiedAboutEvent(meeting, MeetingThankYouNotification.class));
 
-		List<User> rsvpWithYesMembers = userRepository.findUsersThatRSVPYesForEvent(meeting);
+		List<User> rsvpWithYesMembers = userService.findUsersThatRsvpForEvent(meeting, EventRSVPResponse.YES);
 		for (User members : rsvpWithYesMembers) {
 			if (!tankYouNotificationSentMembers.contains(members)) {
 				String message = messageAssemblingService.createMeetingThankYourMessage(members, meeting);
@@ -735,71 +786,17 @@ public class EventBrokerImpl implements EventBroker {
 			bundle.addLog(eventLog);
 		}
 
+		addLanguageNotifications(rsvpWithYesMembers, bundle);
+		;
 		logsAndNotificationsBroker.storeBundle(bundle);
 	}
 
 	@Override
 	@Transactional
-	@SuppressWarnings("unchecked") // for weirdness on event.getmembers
-	public void assignMembers(String userUid, String eventUid, Set<String> assignMemberUids) {
-		Objects.requireNonNull(userUid);
-		Objects.requireNonNull(eventUid);
-		Objects.requireNonNull(assignMemberUids);
-
-		User user = userRepository.findOneByUid(userUid);
-		Event event = eventRepository.findOneByUid(eventUid);
-
-		Set<User> priorMembers = (Set<User>) event.getMembers();
-
-		// consider allowing organizers to also add/remove assignment
-		if (!event.getCreatedByUser().equals(user)) {
-			throw new AccessDeniedException("Error! Only user who created meeting can add members");
-		}
-
-		event.assignMembers(assignMemberUids);
-
-		Set<User> addedMembers = (Set<User>) event.getMembers();
-		addedMembers.removeAll(priorMembers);
-
-		if (!addedMembers.isEmpty()) {
-			EventLog newLog = new EventLog(user, event, ASSIGNED_ADDED);
-			Set<Notification> notifications = constructEventInfoNotifications(event, newLog, addedMembers);
-			logsAndNotificationsBroker.storeBundle(new LogsAndNotificationsBundle(Collections.singleton(newLog), notifications));
-		}
-	}
-
-	@Override
-	@Transactional
-	@SuppressWarnings("unchecked")
-	public void removeAssignedMembers(String userUid, String eventUid, Set<String> memberUids) {
-		Objects.requireNonNull(userUid);
-		Objects.requireNonNull(eventUid);
-
-		User user = userRepository.findOneByUid(userUid);
-		Event event = eventRepository.findOneByUid(eventUid);
-
-		Set<User> membersRemoved = (Set<User>) event.getMembers();
-
-		if (!event.getCreatedByUser().equals(user)) {
-			throw new AccessDeniedException("Error! Only user who created meeting can remove members");
-		}
-
-		event.removeAssignedMembers(memberUids);
-
-		Set<User> finishedMembers = (Set<User>) event.getMembers();
-		membersRemoved.removeAll(finishedMembers);
-		if (!membersRemoved.isEmpty()) {
-			EventLog newLog = new EventLog(user, event, ASSIGNED_REMOVED);
-			logsAndNotificationsBroker.storeBundle(new LogsAndNotificationsBundle(Collections.singleton(newLog), Collections.emptySet()));
-		}
-	}
-
-    @Override
-	@Transactional
     public void updateMeetingPublicStatus(String userUid, String meetingUid, boolean isPublic, GeoLocation location, UserInterfaceType interfaceType) {
         Objects.requireNonNull(meetingUid);
 
-        User user = userRepository.findOneByUid(userUid);
+        User user = userService.load(userUid);
         Meeting meeting = meetingRepository.findOneByUid(meetingUid);
 
         if (!meeting.getCreatedByUser().equals(user)) {
@@ -824,62 +821,28 @@ public class EventBrokerImpl implements EventBroker {
 
 	/*
 	SECTION starts here for reading & retrieving user events
-	major todo : switch this to using a JPA specification model & quick findOne / count call, as in newly designed todo broker
 	 */
-
 	@Override
-	@Transactional(readOnly = true)
-	public List<Event> getOutstandingResponseForUser(User user, EventType eventType) {
-		long startTime = System.currentTimeMillis();
-	    List<Event> cachedRsvps = cacheUtilService.getOutstandingResponseForUser(user, eventType);
+    @Transactional(readOnly = true)
+	public List<Event> getEventsNeedingResponseFromUser(User user) {
+	    long startTime = System.currentTimeMillis();
+		List<Event> cachedRsvps = cacheUtilService.getOutstandingResponseForUser(user.getUid());
 		if (cachedRsvps != null) {
 			return cachedRsvps;
-		} else {
-			Map<Long, Long> eventMap = new HashMap<>();
-			final List<Event> outstandingRSVPs = new ArrayList<>();
-			Predicate<Event> filter = event ->
-					event.isRsvpRequired()
-							&& event.getEventType() == eventType
-							&& ((eventType == EventType.MEETING && event.getCreatedByUser().getId() != user.getId())
-							|| eventType != EventType.MEETING);
-			// todo: well, fix this (consolidate into one criteria query)
-			groupRepository.findByMembershipsUserAndActiveTrueAndParentIsNull(user)
-					.forEach(g -> g.getUpcomingEventsIncludingParents(filter)
-							.stream()
-							.filter(e -> eventType == EventType.MEETING || checkUserJoinedBeforeVote(user, e, g))
-							.filter(e -> !eventLogBroker.hasUserRespondedToEvent(e, user) && eventMap.get(e.getId()) == null)
-							.forEach(e -> {
-								outstandingRSVPs.add(e);
-								eventMap.put(e.getId(), e.getId());
-							}));
-            cacheUtilService.putOutstandingResponseForUser(user, eventType, outstandingRSVPs);
-			logger.info("time to check for responses: {} msecs", System.currentTimeMillis() - startTime);
-			return outstandingRSVPs;
 		}
+
+		Specification<Event> specs = EventSpecifications.upcomingEventsForUser(user);
+		Specification<Event> stripMeetingCreated = (root, query, cb) -> cb.or(cb.notEqual(root.get("type"), EventType.MEETING),
+				cb.notEqual(root.get("createdByUser"), user));
+		List<Event> events = eventRepository
+                .findAll(specs.and(stripMeetingCreated), new Sort(Sort.Direction.ASC, "createdDateTime")).stream()
+				.filter(e -> !eventLogBroker.hasUserRespondedToEvent(e, user))
+				.distinct().collect(Collectors.toList());
+		cacheUtilService.putOutstandingResponseForUser(user.getUid(), events);
+        log.info("time to check for responses: {} msecs", System.currentTimeMillis() - startTime);
+		return events;
 	}
 
-	//N.B. remove this if statement if you want to allow votes for people that joined the group late
-	private boolean checkUserJoinedBeforeVote(User user, Event event, Group group) {
-		Membership membership = group.getMembership(user);
-		return membership != null && membership.getJoinTime().isBefore(event.getCreatedDateTime());
-	}
-
-	@Override
-	public boolean userHasResponsesOutstanding(User user, EventType eventType) {
-		return !getOutstandingResponseForUser(user, eventType).isEmpty();
-	}
-
-
-	@Override
-	@Transactional(readOnly = true)
-	public EventListTimeType userHasEventsToView(User user, EventType type) {
-		boolean pastEvents = userHasEventsToView(user, type, EventListTimeType.PAST);
-		boolean futureEvents = userHasEventsToView(user, type, EventListTimeType.FUTURE);
-		return (pastEvents && futureEvents) ? EventListTimeType.BOTH
-				: pastEvents ? EventListTimeType.PAST
-				: futureEvents ? EventListTimeType.FUTURE
-				: EventListTimeType.NONE;
-	}
 
 	@Override
 	@Transactional(readOnly = true)
@@ -896,10 +859,10 @@ public class EventBrokerImpl implements EventBroker {
 	public Map<User, EventRSVPResponse> getRSVPResponses(Event event) {
 		Map<User, EventRSVPResponse> rsvpResponses = new LinkedHashMap<>();
 
-		List<User> usersAnsweredYes = userRepository.findUsersThatRSVPYesForEvent(event);
-		List<User> usersAnsweredNo = userRepository.findUsersThatRSVPNoForEvent(event);
+		List<User> usersAnsweredYes = userService.findUsersThatRsvpForEvent(event, EventRSVPResponse.YES);
+		List<User> usersAnsweredNo = userService.findUsersThatRsvpForEvent(event, EventRSVPResponse.NO);
 
-		@SuppressWarnings("unchecked") // someting stange with getAllMembers and <user> creates an unchecked warning here (hence suppressing)
+		@SuppressWarnings("unchecked") // someting strange with getAllMembers and <user> creates an unchecked warning here (hence suppressing)
 				Set<User> users = new HashSet<>(event.getAllMembers());
 		users.forEach(u -> rsvpResponses.put(u, usersAnsweredYes.contains(u) ? EventRSVPResponse.YES :
 						usersAnsweredNo.contains(u) ? EventRSVPResponse.NO : EventRSVPResponse.NO_RESPONSE));
@@ -915,9 +878,9 @@ public class EventBrokerImpl implements EventBroker {
 		Instant endTime = !timeType.equals(EventListTimeType.PAST) ? DateTimeUtil.getVeryLongAwayInstant() : Instant.now();
 		return (eventType.equals(EventType.MEETING)) ?
 				(Page) meetingRepository.findByParentGroupMembershipsUserAndEventStartDateTimeBetweenAndCanceledFalseOrderByEventStartDateTimeDesc(user, startTime, endTime,
-						new PageRequest(pageNumber, pageSize)) :
+						PageRequest.of(pageNumber, pageSize)) :
 				(Page) voteRepository.findByParentGroupMembershipsUserAndEventStartDateTimeBetweenAndCanceledFalseOrderByEventStartDateTimeDesc(user, startTime, endTime,
-						new PageRequest(pageNumber, pageSize));
+						PageRequest.of(pageNumber, pageSize));
 	}
 
 	@Override
@@ -939,27 +902,50 @@ public class EventBrokerImpl implements EventBroker {
 		query.groupBy(root.get(Meeting_.eventLocation));
 		query.orderBy(cb.desc(cb.count(root.get(Meeting_.eventLocation))));
 		List<Tuple> results = entityManager.createQuery(query).getResultList();
-		logger.info("results of query: {}", results);
+		log.info("results of query: {}", results);
 		return results != null && !results.isEmpty() ? (String) results.get(0).get(0) : "";
 	}
 
 	@Override
 	@Transactional(readOnly = true)
 	@SuppressWarnings("unchecked")
-	public List<Event> retrieveGroupEvents(Group group, EventType eventType, Instant periodStart, Instant periodEnd) {
+	public List<Event> retrieveGroupEvents(Group group, User user, Instant periodStart, Instant periodEnd) {
 		Sort sort = new Sort(Sort.Direction.DESC, "eventStartDateTime");
 		Instant beginning = (periodStart == null) ? group.getCreatedDateTime() : periodStart;
 		Instant end = (periodEnd == null) ? DateTimeUtil.getVeryLongAwayInstant() : periodEnd;
 
-		Specifications<Event> specifications = Specifications.where(EventSpecifications.notCancelled())
+		Specification<Event> specifications = Specification.where(EventSpecifications.notCancelled())
 				.and(EventSpecifications.hasGroupAsParent(group))
-				.and(EventSpecifications.startDateTimeBetween(beginning, end));
+				.and(EventSpecifications.startDateTimeBetween(beginning, end))
+				.and(EventSpecifications.hasAllUsersAssignedOrIsAssigned(user));
 
-		return (eventType == null) ? eventRepository.findAll(specifications, sort) :
-				(List) (eventType.equals(EventType.MEETING) ? meetingRepository.findAll(specifications, sort) :
-					voteRepository.findAll(specifications, sort));
+		return eventRepository.findAll(specifications, sort);
 	}
 
+	@Override
+	@Transactional(readOnly = true)
+	@SuppressWarnings("unchecked")
+	public LocalTime getMostFrequentEventTime(String groupUid){
+		Group group = groupRepository.findOneByUid(groupUid);
 
+		String qry = "SELECT to_char(e.eventStartDateTime,'hh24:mi') " +
+				"FROM Meeting e " +
+				"WHERE e.ancestorGroup= :group ";
+
+		TypedQuery<String> eventTypedQuery = entityManager.createQuery(qry,String.class)
+						.setParameter("group",group);
+
+		List<String> times = eventTypedQuery.getResultList();
+		LocalTime localTime = null;
+		if(times != null && !times.isEmpty()){
+			Map<String, Long> result = times.stream()
+					.collect(Collectors.groupingBy(Function.identity(), Collectors.counting()));
+
+			Map.Entry<String,Long> entry = result.entrySet().iterator().next();
+			localTime = LocalTime.parse(entry.getKey());
+		}
+
+		return localTime;
+	}
 
 }

@@ -6,6 +6,7 @@ import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 import za.org.grassroot.core.domain.User;
+import za.org.grassroot.core.enums.UserInterfaceType;
 import za.org.grassroot.services.UserResponseBroker;
 
 import static org.mockito.Mockito.*;
@@ -41,7 +42,7 @@ public class USSDUserControllerTest extends USSDAbstractUnitTest {
                 .build();
         wireUpHomeController(ussdHomeController);
         wireUpMessageSourceAndGroupUtil(ussdUserController);
-        testUser = new User(testUserPhone);
+        testUser = new User(testUserPhone, null, null);
     }
 
     /*
@@ -52,9 +53,9 @@ public class USSDUserControllerTest extends USSDAbstractUnitTest {
         testUser.setHasInitiatedSession(true);
         testUser.setDisplayName("");
 
-        when(userManagementServiceMock.loadOrCreateUser(testUserPhone)).thenReturn(testUser);
+        when(userManagementServiceMock.loadOrCreateUser(testUserPhone, UserInterfaceType.USSD)).thenReturn(testUser);
         when(userManagementServiceMock.findByInputNumber(testUserPhone)).thenReturn(testUser);
-        when(userManagementServiceMock.needsToRenameSelf(testUser)).thenReturn(true);
+        when(userManagementServiceMock.needsToSetName(testUser, false)).thenReturn(true);
 
         mockMvc.perform(get("/ussd/start").param(phoneParam, testUserPhone)).
                 andExpect(status().isOk());
@@ -64,9 +65,9 @@ public class USSDUserControllerTest extends USSDAbstractUnitTest {
         mockMvc.perform(get("/ussd/rename-start").param(phoneParam, testUserPhone).param("request", "now it is set")).
                 andExpect(status().isOk());
 
-        verify(userManagementServiceMock, times(1)).loadOrCreateUser(testUserPhone);
+        verify(userManagementServiceMock, times(1)).loadOrCreateUser(testUserPhone, UserInterfaceType.USSD);
         verify(userManagementServiceMock, times(1)).findByInputNumber(testUserPhone);
-        verify(userManagementServiceMock, times(1)).updateDisplayName(testUser.getUid(), "now it is set");
+        verify(userManagementServiceMock, times(1)).updateDisplayName(testUser.getUid(), testUser.getUid(), "now it is set");
 
     }
 
@@ -83,7 +84,7 @@ public class USSDUserControllerTest extends USSDAbstractUnitTest {
     @Test
     public void renameSelfPromptShouldWork() throws Exception {
         when(userManagementServiceMock.findByInputNumber(testUserPhone)).thenReturn(testUser);
-        User namedUser = new User("27801115550", "named");
+        User namedUser = new User("27801115550", "named", null);
         when(userManagementServiceMock.findByInputNumber(namedUser.getPhoneNumber())).thenReturn(namedUser);
         mockMvc.perform(get(path + "name").param(phoneParam, testUserPhone)).andExpect(status().isOk());
         mockMvc.perform(get(path + "name").param(phoneParam, namedUser.getPhoneNumber())).andExpect(status().isOk());
@@ -94,7 +95,7 @@ public class USSDUserControllerTest extends USSDAbstractUnitTest {
 
     @Test
     public void renameSelfDoneScreenShouldWork() throws Exception {
-        User namedUser = new User("278011115550", "named");
+        User namedUser = new User("278011115550", "named", null);
         when(userManagementServiceMock.findByInputNumber(testUserPhone)).thenReturn(testUser);
         when(userManagementServiceMock.findByInputNumber(namedUser.getPhoneNumber())).thenReturn(namedUser);
         mockMvc.perform(get(path + "name-do").param(phoneParam, testUserPhone).param("request", "naming")).
@@ -103,8 +104,8 @@ public class USSDUserControllerTest extends USSDAbstractUnitTest {
                 andExpect(status().isOk());
         verify(userManagementServiceMock, times(1)).findByInputNumber(testUserPhone);
         verify(userManagementServiceMock, times(1)).findByInputNumber(namedUser.getPhoneNumber());
-        verify(userManagementServiceMock, times(1)).updateDisplayName(testUser.getUid(), "naming");
-        verify(userManagementServiceMock, times(1)).updateDisplayName(namedUser.getUid(), "new name");
+        verify(userManagementServiceMock, times(1)).updateDisplayName(testUser.getUid(), testUser.getUid(), "naming");
+        verify(userManagementServiceMock, times(1)).updateDisplayName(namedUser.getUid(), namedUser.getUid(), "new name");
         verifyNoMoreInteractions(userManagementServiceMock);
         verifyZeroInteractions(groupBrokerMock);
         verifyZeroInteractions(eventBrokerMock);

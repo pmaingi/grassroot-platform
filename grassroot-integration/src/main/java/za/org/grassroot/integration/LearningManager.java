@@ -1,63 +1,40 @@
 package za.org.grassroot.integration;
 
-import com.google.cloud.speech.v1.*;
-import com.google.protobuf.ByteString;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.core.env.Environment;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
-import org.springframework.web.client.HttpStatusCodeException;
-import org.springframework.web.client.ResourceAccessException;
+import org.springframework.web.client.RestClientException;
 import org.springframework.web.client.RestTemplate;
 import org.springframework.web.util.UriComponentsBuilder;
 import za.org.grassroot.integration.exception.SeloApiCallFailure;
 import za.org.grassroot.integration.exception.SeloParseDateTimeFailure;
 
-import javax.annotation.PostConstruct;
-import java.io.IOException;
+import java.net.URI;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
-import java.util.stream.Collectors;
 
 /**
  * Created by shakka on 8/15/16.
  */
-@Service
+@Service @Slf4j
 public class LearningManager implements LearningService {
 
-    private Logger log = LoggerFactory.getLogger(LearningManager.class);
+    @Value("${grassroot.datetime.lambda.url:http://localhost:5000/parse}")
+    private String learningLambdaUrl;
+
+    @Value("${grassroot.datetime.poll.datetime:false}")
+    private boolean pollLearning;
 
     private static final String ERROR_PARSING = "ERROR_PARSING";
-    private static final DateTimeFormatter dateTimeFormatter = DateTimeFormatter.ISO_LOCAL_DATE_TIME;
+    private static final DateTimeFormatter dateTimeFormatter = DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm"); //01-11-2018T00:00
 
     private RestTemplate restTemplate;
-    private Environment environment;
-
-    private String learningHost;
-    private int learningPort;
-    private String dateTimePath;
-    private String dateTimeParam;
-    private String relatedTermPath;
-    private String relatedTermParam;
 
     @Autowired
-    public LearningManager(RestTemplate restTemplate, Environment environment) {
+    public LearningManager(RestTemplate restTemplate) {
         this.restTemplate = restTemplate;
-        this.environment = environment;
-    }
-
-    @PostConstruct
-    public void init() {
-        learningHost = environment.getProperty("grassroot.learning.host", "localhost"); // default to localhost if not set
-        learningPort = environment.getProperty("grassroot.learning.port", Integer.class, 9000);
-        dateTimePath = environment.getProperty("grassroot.learning.datetime.path", "parse");
-        dateTimeParam = environment.getProperty("grassroot.learning.datetime.param", "phrase");
-        relatedTermPath = environment.getProperty("grassroot.learning.relatedterm.path", "related");
-        relatedTermParam = environment.getProperty("grassroot.learning.relatedterm.param", "term");
     }
 
     @Override
@@ -68,14 +45,12 @@ public class LearningManager implements LearningService {
         try {
             // note : the rest template is autowired to use a default character encoding (UTF 8), so putting encode
             // here will double encode and throw errors, hence leave it out
-            String url = UriComponentsBuilder.newInstance()
-                    .scheme("http")
-                    .host(learningHost)
-                    .port(learningPort)
-                    .path(dateTimePath)
-                    .queryParam(dateTimeParam, phrase)
+            String url = UriComponentsBuilder.fromHttpUrl(learningLambdaUrl)
+                    .queryParam("date_string", phrase)
                     .build()
                     .toUriString();
+
+            log.info("Attempting to parse date time with url: {}", url);
 
             long start = System.currentTimeMillis();
             String s = this.restTemplate.getForObject(url, String.class);
@@ -96,26 +71,17 @@ public class LearningManager implements LearningService {
         }
     }
 
-    @Override
-    public Map<String, Double> findRelatedTerms(String searchTerm) {
-        try {
-            String url = UriComponentsBuilder.newInstance()
-                    .scheme("http")
-                    .host(learningHost)
-                    .port(learningPort)
-                    .path(relatedTermPath)
-                    .queryParam(relatedTermParam, searchTerm)
-                    .build()
-                    .toString();
-
-            log.info("Calling learning service, with URL: {}", url);
-
-            @SuppressWarnings("unchecked")
-            Map<String, Double> returnedTerms = restTemplate.getForObject(url, HashMap.class);
-            return returnedTerms;
-        } catch (ResourceAccessException|HttpStatusCodeException e) {
-            log.warn("Error calling learning service! Error: " + e.toString());
-            return new HashMap<>();
+    @Scheduled(cron = "0 0/5 5-19 * * ?")
+    public void keepAliveParser() {
+        if (pollLearning) {
+            log.info("Keeping warm date time parser ... ");
+            try {
+                URI uri = UriComponentsBuilder.fromHttpUrl(learningLambdaUrl).queryParam("date_string", "Tomorrow at 9am").build().toUri();
+                String pollingResult = restTemplate.getForObject(uri, String.class);
+                log.info("Polling date time returned: {}", pollingResult);
+            } catch (RestClientException e) {
+                log.error("Keep alive error: {}", e.getMessage());
+            }
         }
     }
 

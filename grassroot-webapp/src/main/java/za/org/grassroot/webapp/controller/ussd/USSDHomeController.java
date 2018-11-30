@@ -15,25 +15,26 @@ import za.org.grassroot.core.domain.EntityForUserResponse;
 import za.org.grassroot.core.domain.SafetyEvent;
 import za.org.grassroot.core.domain.User;
 import za.org.grassroot.core.domain.campaign.Campaign;
+import za.org.grassroot.core.domain.campaign.CampaignActionType;
 import za.org.grassroot.core.domain.campaign.CampaignMessage;
-import za.org.grassroot.core.domain.campaign.CampaignMessageAction;
-import za.org.grassroot.core.enums.MessageVariationAssignment;
 import za.org.grassroot.core.enums.UserInterfaceType;
+import za.org.grassroot.core.enums.UserLogType;
+import za.org.grassroot.integration.location.LocationInfoBroker;
 import za.org.grassroot.services.UserResponseBroker;
 import za.org.grassroot.services.campaign.CampaignBroker;
-import za.org.grassroot.services.campaign.util.CampaignUtil;
+import za.org.grassroot.services.campaign.CampaignTextBroker;
+import za.org.grassroot.webapp.controller.ussd.group.USSDGroupJoinController;
 import za.org.grassroot.webapp.controller.ussd.menus.USSDMenu;
 import za.org.grassroot.webapp.enums.USSDResponseTypes;
 import za.org.grassroot.webapp.enums.USSDSection;
 import za.org.grassroot.webapp.model.ussd.AAT.Option;
 import za.org.grassroot.webapp.model.ussd.AAT.Request;
-import za.org.grassroot.webapp.util.USSDCampaignUtil;
+import za.org.grassroot.webapp.util.USSDCampaignConstants;
 
+import javax.annotation.PostConstruct;
 import java.net.URI;
 import java.net.URISyntaxException;
 import java.util.*;
-import java.util.stream.Collectors;
-import java.util.stream.Stream;
 
 import static org.springframework.web.bind.annotation.RequestMethod.GET;
 import static za.org.grassroot.webapp.enums.USSDSection.HOME;
@@ -46,12 +47,10 @@ import static za.org.grassroot.webapp.enums.USSDSection.HOME;
 @RequestMapping(method = GET, produces = MediaType.APPLICATION_XML_VALUE)
 public class USSDHomeController extends USSDBaseController {
 
-    private final UserResponseBroker userResponseBroker;
-
     // since this controller in effect routes responses, needs access to the other primary ones
     // setters are for testing (since we need this controller in the tests of the handler)
     private final USSDLiveWireController liveWireController;
-    private final USSDGroupController groupController;
+    private final USSDGroupJoinController groupJoinController;
     @Setter(AccessLevel.PACKAGE) private USSDVoteController voteController;
     @Setter(AccessLevel.PACKAGE) private USSDMeetingController meetingController;
     private final USSDTodoController todoController;
@@ -59,6 +58,9 @@ public class USSDHomeController extends USSDBaseController {
     private USSDGeoApiController geoApiController;
 
     private final CampaignBroker campaignBroker;
+    private final UserResponseBroker userResponseBroker;
+    private CampaignTextBroker campaignTextBroker;
+    private LocationInfoBroker locationInfoBroker;
 
     private static final USSDSection thisSection = HOME;
 
@@ -80,17 +82,13 @@ public class USSDHomeController extends USSDBaseController {
     @Value("${grassroot.geo.apis.enabled:false}")
     private boolean geoApisEnabled;
 
-
-    // todo : think about how to do dynamically (and/or decide on this)
-    private final Map<String, String> geoApiSuffixes = Collections.unmodifiableMap(Stream.of(
-            new AbstractMap.SimpleEntry<>("11", "IZWE_LAMI")
-    ).collect(Collectors.toMap(AbstractMap.SimpleEntry::getKey, AbstractMap.SimpleEntry::getValue)));
+    private Map<String, String> geoApiSuffixes;
 
     @Autowired
-    public USSDHomeController(UserResponseBroker userResponseBroker, USSDLiveWireController liveWireController, USSDGroupController groupController, USSDVoteController voteController, USSDMeetingController meetingController, USSDTodoController todoController, USSDSafetyGroupController safetyController, CampaignBroker campaignBroker) {
+    public USSDHomeController(UserResponseBroker userResponseBroker, USSDLiveWireController liveWireController, USSDGroupJoinController groupJoinController, USSDVoteController voteController, USSDMeetingController meetingController, USSDTodoController todoController, USSDSafetyGroupController safetyController, CampaignBroker campaignBroker) {
         this.userResponseBroker = userResponseBroker;
         this.liveWireController = liveWireController;
-        this.groupController = groupController;
+        this.groupJoinController = groupJoinController;
         this.voteController = voteController;
         this.meetingController = meetingController;
         this.todoController = todoController;
@@ -103,6 +101,27 @@ public class USSDHomeController extends USSDBaseController {
         this.geoApiController = ussdGeoApiController;
     }
 
+    @Autowired(required = false) // may turn this off / on in future
+    public void setCampaignTextBroker(CampaignTextBroker campaignTextBroker) {
+        this.campaignTextBroker = campaignTextBroker;
+    }
+
+    @Autowired(required = false)
+    public void setLocationInfoBroker(LocationInfoBroker locationInfoBroker) {
+        this.locationInfoBroker = locationInfoBroker;
+    }
+
+    @PostConstruct
+    public void init() {
+        if (locationInfoBroker != null) {
+            log.info("Initiating USSD, setting geo apis");
+            geoApiSuffixes = locationInfoBroker.getAvailableSuffixes();
+            log.info("Set geo api suffixes: {}", geoApiSuffixes);
+        } else {
+            log.info("Geo APIs disabled, not setting");
+        }
+    }
+
     @RequestMapping(value = homePath + startMenu)
     @ResponseBody
     public Request startMenu(@RequestParam(value = phoneNumber) String inputNumber,
@@ -111,17 +130,14 @@ public class USSDHomeController extends USSDBaseController {
         Long startTime = System.currentTimeMillis();
 
         final boolean trailingDigitsPresent = codeHasTrailingDigits(enteredUSSD);
+        log.info("Initiating USSD, trailing digits present: {}", trailingDigitsPresent);
 
         if (!trailingDigitsPresent && userInterrupted(inputNumber)) {
-            return menuBuilder(interruptedPrompt(inputNumber));
+            return menuBuilder(interruptedPrompt(inputNumber, null));
         }
 
-        User sessionUser = userManager.loadOrCreateUser(inputNumber);
+        User sessionUser = userManager.loadOrCreateUser(inputNumber, UserInterfaceType.USSD);
         userLogger.recordUserSession(sessionUser.getUid(), UserInterfaceType.USSD);
-
-        if (!sessionUser.isHasInitiatedSession()) {
-            userManager.setHasInitiatedUssdSession(sessionUser.getUid());
-        }
 
         USSDMenu openingMenu = trailingDigitsPresent ?
                 handleTrailingDigits(enteredUSSD, inputNumber, sessionUser) :
@@ -132,13 +148,14 @@ public class USSDHomeController extends USSDBaseController {
         return menuBuilder(openingMenu, true);
     }
 
-    private USSDMenu handleTrailingDigits(final String enteredUSSD, final String inputNumber, User user) throws URISyntaxException {
+    private USSDMenu handleTrailingDigits(final String enteredUSSD, final String inputNumber, User user) {
         String trailingDigits = enteredUSSD.substring(hashPosition + 1, enteredUSSD.length() - 1);
         return userInterrupted(inputNumber) && !safetyCode.equals(trailingDigits) ?
-                interruptedPrompt(inputNumber) : directBasedOnTrailingDigits(trailingDigits, user);
+                interruptedPrompt(inputNumber, trailingDigits) : directBasedOnTrailingDigits(trailingDigits, user);
     }
 
     private USSDMenu checkForResponseOrDefault(final User user) throws URISyntaxException {
+        recordInitiatedAndSendWelcome(user, true);
         EntityForUserResponse entity = userResponseBroker.checkForEntityForUserResponse(user.getUid(), true);
         USSDResponseTypes neededResponse = neededResponse(entity, user);
         return neededResponse.equals(USSDResponseTypes.NONE)
@@ -146,23 +163,35 @@ public class USSDHomeController extends USSDBaseController {
                 : requestUserResponse(user, neededResponse, entity);
     }
 
+    private void recordInitiatedAndSendWelcome(User user, boolean sendWelcome) {
+        if (!user.isHasInitiatedSession()) {
+            userManager.setHasInitiatedUssdSession(user.getUid(), sendWelcome);
+        }
+    }
+
     /*
     Method to go straight to start menu, over-riding prior interruptions, and/or any responses, etc.
      */
     @RequestMapping(value = homePath + startMenu + "_force")
     @ResponseBody
-    public Request forceStartMenu(@RequestParam(value = phoneNumber) String inputNumber) throws URISyntaxException {
-        return menuBuilder(defaultStartMenu(userManager.loadOrCreateUser(inputNumber)));
+    public Request forceStartMenu(@RequestParam(value = phoneNumber) String inputNumber,
+                                  @RequestParam(required = false) String trailingDigits) throws URISyntaxException {
+        final User user = userManager.loadOrCreateUser(inputNumber, UserInterfaceType.USSD);
+        return menuBuilder(trailingDigits != null ?
+                directBasedOnTrailingDigits(trailingDigits, user) :  defaultStartMenu(user));
     }
 
-    private USSDMenu interruptedPrompt(String inputNumber) {
+    private USSDMenu interruptedPrompt(String inputNumber, String trailingDigits) {
         String returnUrl = cacheManager.fetchUssdMenuForUser(inputNumber);
-        log.info("The user was interrupted somewhere ...Here's the URL: " + returnUrl);
+        log.info("The user was interrupted somewhere: trailing digits: {}, URL: {}", trailingDigits, returnUrl);
 
         User user = userManager.findByInputNumber(inputNumber);
         USSDMenu promptMenu = new USSDMenu(getMessage(thisSection, startMenu, promptKey + "-interrupted", user));
         promptMenu.addMenuOption(returnUrl, getMessage(thisSection, startMenu, "interrupted.resume", user));
-        promptMenu.addMenuOption(startMenu + "_force", getMessage(thisSection, startMenu, "interrupted.start", user));
+
+        final String startMenuOption = startMenu + "_force" + (!StringUtils.isEmpty(trailingDigits) ? "?trailingDigits=" + trailingDigits : "");
+        log.info("User interrupted, start menu option: {}", startMenuOption);
+        promptMenu.addMenuOption(startMenuOption, getMessage(thisSection, startMenu, "interrupted.start", user));
 
         // set the user's "last USSD menu" back to null, so avoids them always coming back here
         userLogger.recordUssdInterruption(user.getUid(), returnUrl);
@@ -177,28 +206,35 @@ public class USSDHomeController extends USSDBaseController {
 
     private USSDResponseTypes neededResponse(EntityForUserResponse userResponse, User user) {
         return userResponse != null ? USSDResponseTypes.fromJpaEntityType(userResponse.getJpaEntityType()) :
-                userManager.needsToRenameSelf(user) ? USSDResponseTypes.RENAME_SELF : USSDResponseTypes.NONE;
+                userManager.needsToSetName(user, false) ? USSDResponseTypes.RENAME_SELF : USSDResponseTypes.NONE;
     }
 
-    private USSDMenu directBasedOnTrailingDigits(String trailingDigits, User user) throws URISyntaxException {
+    private USSDMenu directBasedOnTrailingDigits(String trailingDigits, User user) {
         USSDMenu returnMenu;
         log.info("Processing trailing digits ..." + trailingDigits);
+        boolean sendWelcomeIfNew = false;
         if (safetyCode.equals(trailingDigits)) {
             returnMenu = safetyController.assemblePanicButtonActivationMenu(user);
         } else if (livewireSuffix.equals(trailingDigits)) {
             returnMenu = liveWireController.assembleLiveWireOpening(user, 0);
+            sendWelcomeIfNew = true;
         } else if (sendMeLink.equals(trailingDigits)) {
             returnMenu = assembleSendMeAndroidLinkMenu(user);
+            sendWelcomeIfNew = true;
         } else if (geoApisEnabled && geoApiSuffixes.keySet().contains(trailingDigits)) {
             returnMenu = geoApiController.openingMenu(user, geoApiSuffixes.get(trailingDigits));
+            sendWelcomeIfNew = false;
         } else {
-            returnMenu = groupController.lookForJoinCode(user, trailingDigits);
-            /*
-        	returnMenu = getActiveCampaignForTrailingCode(trailingDigits, user);
-            if (returnMenu == null) {
-                returnMenu = groupController.lookForJoinCode(user, trailingDigits);
-             */
+            returnMenu = groupJoinController.lookForJoinCode(user, trailingDigits);
+            boolean groupJoin = returnMenu != null;
+            if (!groupJoin) {
+                log.info("checking if campaign: {}", trailingDigits);
+                returnMenu = getActiveCampaignForTrailingCode(trailingDigits, user);
+            }
+            sendWelcomeIfNew = groupJoin;
+            log.info("group or campaign join, trailing digits ={}, send welcome = {}", trailingDigits, sendWelcomeIfNew);
         }
+        recordInitiatedAndSendWelcome(user, sendWelcomeIfNew);
         return returnMenu;
     }
 
@@ -208,11 +244,14 @@ public class USSDHomeController extends USSDBaseController {
     }
 
     private USSDMenu getActiveCampaignForTrailingCode(String trailingDigits, User user){
-        Campaign campaign = campaignBroker.getCampaignDetailsByCode(trailingDigits);
-        return (campaign != null) ? assembleCampaignMessageResponse(campaign,user): null;
+        Campaign campaign = campaignBroker.getCampaignDetailsByCode(trailingDigits, user.getUid(), true, UserInterfaceType.USSD);
+        log.info("found a campaign? : {}", campaign);
+        return (campaign != null) ?
+                assembleCampaignMessageResponse(campaign, user):
+                welcomeMenu(getMessage(HOME, startMenu, promptKey + ".unknown.request", user), user);
     }
 
-    private USSDMenu defaultStartMenu(User sessionUser) throws URISyntaxException {
+    private USSDMenu defaultStartMenu(User sessionUser) {
         String welcomeMessage = sessionUser.hasName() ?
                 getMessage(thisSection, startMenu, promptKey + "-named", sessionUser.getName(""), sessionUser) :
                 getMessage(thisSection, startMenu, promptKey, sessionUser);
@@ -239,7 +278,6 @@ public class USSDHomeController extends USSDBaseController {
 
     /*
     Section of helper methods for opening menu response handling
-    todo : move these into campaign controller, as above
      */
     private USSDMenu assembleSendMeAndroidLinkMenu(User user) {
         userManager.sendAndroidLinkSms(user.getUid());
@@ -247,53 +285,48 @@ public class USSDHomeController extends USSDBaseController {
         return new USSDMenu(message, optionsHomeExit(user, false));
     }
 
-    private USSDMenu assembleCampaignMessageResponse(Campaign campaign, User user){
-        Set<Locale> supportedCampaignLanguages = CampaignUtil.getCampaignSupportedLanguages(campaign);
-        if(supportedCampaignLanguages.size() == 1){
-            return assembleCampaignResponse(campaign,supportedCampaignLanguages.iterator().next());
+    private USSDMenu assembleCampaignMessageResponse(Campaign campaign, User user) {
+        log.info("fire off SMS in background, if exists ...");
+        campaignTextBroker.checkForAndTriggerCampaignText(campaign.getUid(), user.getUid(), null, UserInterfaceType.USSD);
+        log.info("fired off ... continue ...");
+        Set<Locale> supportedCampaignLanguages = campaignBroker.getCampaignLanguages(campaign.getUid());
+        userLogger.recordUserLog(user.getUid(), UserLogType.CAMPAIGN_ENGAGED, campaign.getUid(), UserInterfaceType.USSD);
+        if(supportedCampaignLanguages.size() == 1) {
+            return assembleCampaignResponse(campaign, supportedCampaignLanguages.iterator().next());
+        } else if(!StringUtils.isEmpty(user.getLanguageCode()) && supportedCampaignLanguages.contains(new Locale(user.getLanguageCode()))){
+            return assembleCampaignResponse(campaign, user.getLocale());
+        } else {
+            return assembleCampaignResponseForSupportedLanguage(campaign, user);
         }
-        if(!StringUtils.isEmpty(user.getLanguageCode()) && supportedCampaignLanguages.contains(new Locale(user.getLanguageCode()))){
-            return assembleCampaignResponse(campaign,new Locale(user.getLanguageCode()));
-        }
-        return assembleCampaignResponseForSupportedLanguage(campaign,user);
     }
 
-    private USSDMenu assembleCampaignResponse(Campaign campaign,Locale userLocale){
-        CampaignMessage campaignMessage = CampaignUtil.getCampaignMessageByAssignmentVariationAndUserInterfaceTypeAndLocale(campaign,
-                MessageVariationAssignment.CONTROL, UserInterfaceType.USSD, userLocale);
+    private USSDMenu assembleCampaignResponse(Campaign campaign, Locale userLocale) {
+        CampaignMessage campaignMessage = campaignBroker.getOpeningMessage(campaign.getUid(), userLocale, UserInterfaceType.USSD, null);
         String promptMessage = campaignMessage.getMessage();
         Map<String, String> linksMap = new HashMap<>();
-        if(campaignMessage.getCampaignMessageActionSet() != null && !campaignMessage.getCampaignMessageActionSet().isEmpty()){
-            for(CampaignMessageAction action : campaignMessage.getCampaignMessageActionSet()){
-                String optionKey = USSDCampaignUtil.CAMPAIGN_PREFIX + action.getActionType().name().toLowerCase();
-                String option  = getMessage(optionKey,userLocale.getLanguage());
-                StringBuilder url = new StringBuilder();
-                url.append(USSDCampaignUtil.getCampaignUrlPrefixs().get(action.getActionType()));
-                url.append(USSDCampaignUtil.CODE_PARAMETER);
-                url.append(campaign.getCampaignCode());
-                url.append(USSDCampaignUtil.LANGUAGE_PARAMETER);
-                url.append(userLocale.getLanguage());
-                linksMap.put(option,url.toString());
+        if (campaignMessage.getNextMessages() != null && !campaignMessage.getNextMessages().isEmpty()){
+            for(Map.Entry<String, CampaignActionType> action : campaignMessage.getNextMessages().entrySet()){
+                String optionKey = USSDCampaignConstants.CAMPAIGN_PREFIX + action.getValue().name().toLowerCase();
+                String option = getMessage(optionKey, userLocale.getLanguage());
+                StringBuilder url = new StringBuilder("campaign/");
+                url.append(USSDCampaignConstants.getCampaignUrlPrefixs().get(action.getValue())).append("?");
+                url.append(USSDCampaignConstants.MESSAGE_UID_PARAMETER).append(action.getKey());
+                log.info("adding url: {}", url.toString());
+                linksMap.put(url.toString(), option);
             }
         }
         return new USSDMenu(promptMessage,linksMap);
     }
 
-    private USSDMenu assembleCampaignResponseForSupportedLanguage(Campaign campaign, User user){
-        Locale userLocale = (user.getLanguageCode() != null)? new Locale(user.getLanguageCode()):Locale.ENGLISH;
-        String optionKey = USSDCampaignUtil.CAMPAIGN_PREFIX + USSDCampaignUtil.SET_LANGUAGE_URL;
-        String promptMessage = getMessage(optionKey,userLocale.getLanguage());
+    private USSDMenu assembleCampaignResponseForSupportedLanguage(Campaign campaign, User user) {
+        String promptMessage = getMessage("user.language.prompt", user.getLocale().getLanguage());
         Map<String, String> linksMap = new HashMap<>();
-        Set<Locale> localeSet = CampaignUtil.getCampaignSupportedLanguages(campaign);
-        for(Locale locale : localeSet){
-            String option = locale.getLanguage();
-            StringBuilder url = new StringBuilder();
-            url.append(USSDCampaignUtil.SET_LANGUAGE_URL);
-            url.append(USSDCampaignUtil.CODE_PARAMETER);
-            url.append(campaign.getCampaignCode());
-            url.append(USSDCampaignUtil.LANGUAGE_PARAMETER);
-            url.append(locale.getLanguage());
-            linksMap.put(option,url.toString());
+        Set<Locale> localeSet = campaignBroker.getCampaignLanguages(campaign.getUid());
+        for(Locale locale : localeSet) {
+            String option = getMessage("language." + locale.getLanguage(), user.getLocale().getLanguage());
+            String url = "campaign/set-lang?campaignUid=" + campaign.getUid() +
+                    USSDCampaignConstants.LANG_SUFFIX + locale.getLanguage();
+            linksMap.put(url, option);
         }
         return new USSDMenu(promptMessage,linksMap);
     }

@@ -1,15 +1,14 @@
 package za.org.grassroot.core.repository;
 
+import lombok.extern.slf4j.Slf4j;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.test.autoconfigure.orm.jpa.DataJpaTest;
 import org.springframework.data.domain.Sort;
-import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.ContextConfiguration;
 import org.springframework.test.context.junit4.SpringRunner;
-import org.springframework.transaction.annotation.Transactional;
 import za.org.grassroot.TestContextConfiguration;
-import za.org.grassroot.core.GrassrootApplicationProfiles;
 import za.org.grassroot.core.domain.User;
 import za.org.grassroot.core.domain.UserLog;
 import za.org.grassroot.core.util.DateTimeUtil;
@@ -23,7 +22,7 @@ import static junit.framework.TestCase.assertTrue;
 import static org.hamcrest.CoreMatchers.is;
 import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertThat;
-import static org.springframework.data.jpa.domain.Specifications.*;
+import static org.springframework.data.jpa.domain.Specification.where;
 import static za.org.grassroot.core.enums.UserInterfaceType.UNKNOWN;
 import static za.org.grassroot.core.enums.UserLogType.*;
 import static za.org.grassroot.core.specifications.UserLogSpecifications.*;
@@ -31,10 +30,8 @@ import static za.org.grassroot.core.specifications.UserLogSpecifications.*;
 /**
  * Created by luke on 2016/02/22.
  */
-@RunWith(SpringRunner.class)
+@Slf4j @RunWith(SpringRunner.class) @DataJpaTest
 @ContextConfiguration(classes = TestContextConfiguration.class)
-@Transactional
-@ActiveProfiles(GrassrootApplicationProfiles.INMEMORY)
 public class UserLogRepositoryTest {
 
     @Autowired
@@ -46,7 +43,7 @@ public class UserLogRepositoryTest {
     @Test
     public void shouldSaveAndRetrieveUserLogs() {
         assertThat(userLogRepository.count(), is(0L));
-        User testUser = userRepository.save(new User("0605551111"));
+        User testUser = userRepository.save(new User("0605551111", null, null));
         UserLog createLog = userLogRepository.save(new UserLog(testUser.getUid(), CREATED_IN_DB, null, UNKNOWN));
         testUser.setHasInitiatedSession(true);
         testUser.setHasWebProfile(true);
@@ -72,7 +69,7 @@ public class UserLogRepositoryTest {
         Instant now = Instant.now();
         Sort sort = new Sort(Sort.Direction.ASC, "creationTime");
 
-        User testUser = new User("0605550000");
+        User testUser = new User("0605550000", null, null);
         testUser = userRepository.save(testUser);
         UserLog createdLog = new UserLog(testUser.getUid(), CREATED_IN_DB, "Created the user", UNKNOWN);
         createdLog.setCreationTime(twoMonths);

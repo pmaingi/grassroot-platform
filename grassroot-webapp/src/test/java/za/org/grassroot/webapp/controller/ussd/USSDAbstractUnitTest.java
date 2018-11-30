@@ -16,14 +16,15 @@ import org.springframework.web.servlet.handler.SimpleMappingExceptionResolver;
 import org.springframework.web.servlet.view.InternalResourceViewResolver;
 import za.org.grassroot.core.domain.BaseRoles;
 import za.org.grassroot.core.domain.User;
-import za.org.grassroot.core.dto.MembershipInfo;
+import za.org.grassroot.core.dto.membership.MembershipInfo;
 import za.org.grassroot.core.repository.GroupRepository;
 import za.org.grassroot.integration.LearningService;
 import za.org.grassroot.services.PermissionBroker;
 import za.org.grassroot.services.SafetyEventBroker;
-import za.org.grassroot.services.account.AccountGroupBroker;
+import za.org.grassroot.services.account.AccountFeaturesBroker;
 import za.org.grassroot.services.async.AsyncUserLogger;
 import za.org.grassroot.services.campaign.CampaignBroker;
+import za.org.grassroot.services.geo.AddressBroker;
 import za.org.grassroot.services.group.GroupBroker;
 import za.org.grassroot.services.group.GroupQueryBroker;
 import za.org.grassroot.services.group.MemberDataExportBroker;
@@ -31,7 +32,6 @@ import za.org.grassroot.services.livewire.DataSubscriberBroker;
 import za.org.grassroot.services.livewire.LiveWireAlertBroker;
 import za.org.grassroot.services.livewire.LiveWireContactBroker;
 import za.org.grassroot.services.task.*;
-import za.org.grassroot.services.user.AddressBroker;
 import za.org.grassroot.services.user.UserManagementService;
 import za.org.grassroot.services.util.CacheUtilService;
 import za.org.grassroot.webapp.util.USSDGroupUtil;
@@ -108,7 +108,7 @@ public abstract class USSDAbstractUnitTest {
     protected MemberDataExportBroker memberDataExportBrokerMock;
 
     @Mock
-    protected AccountGroupBroker accountGroupBrokerMock;
+    protected AccountFeaturesBroker accountFeaturesBrokerMock;
 
     @Mock
     protected CampaignBroker campaignBroker;
@@ -130,13 +130,13 @@ public abstract class USSDAbstractUnitTest {
     protected static final String interruptedChoice = "1";
 
     protected static final LocalDate testDay = LocalDate.of(Year.now().getValue(), 6, 16);
-    protected static final Year testYear = testDay.isAfter(LocalDate.now()) ? Year.now() : Year.now().plusYears(1);
+    protected static final Year testYear = LocalDate.now().isBefore(testDay) ? Year.now() : Year.now().plusYears(1);
 
     private static final String baseForOthers = "2781000111";
-    protected User testUserZu = new User(baseForOthers + "2");
-    protected User testUserTs = new User(baseForOthers + "3");
-    protected User testUserNso = new User(baseForOthers + "4");
-    protected User testUserSt = new User(baseForOthers + "5");
+    protected User testUserZu = new User(baseForOthers + "2", null, null);
+    protected User testUserTs = new User(baseForOthers + "3", null, null);
+    protected User testUserNso = new User(baseForOthers + "4", null, null);
+    protected User testUserSt = new User(baseForOthers + "5", null, null);
 
     protected List<User> languageUsers;
 

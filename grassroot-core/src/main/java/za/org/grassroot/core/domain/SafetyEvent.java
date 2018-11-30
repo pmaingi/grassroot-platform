@@ -3,6 +3,7 @@ package za.org.grassroot.core.domain;
 import lombok.Getter;
 import lombok.Setter;
 import za.org.grassroot.core.domain.geo.GeoLocation;
+import za.org.grassroot.core.domain.group.Group;
 import za.org.grassroot.core.enums.LocationSource;
 import za.org.grassroot.core.util.UIDGenerator;
 
@@ -104,6 +105,8 @@ public class SafetyEvent implements EntityForUserResponse {
         return group;
     }
 
+
+
     public void updateScheduledReminderTime() {
         this.scheduledReminderTime = scheduledReminderTime.plus(20, ChronoUnit.MINUTES);
     }
@@ -116,5 +119,27 @@ public class SafetyEvent implements EntityForUserResponse {
                 ", createdDateTime=" + createdDateTime +
                 ", group=" + group +
                 '}';
+    }
+
+    @Override
+    public void setParent(UidIdentifiable parent) {
+        if (!parent.getJpaEntityType().equals(JpaEntityType.GROUP))
+            throw new IllegalArgumentException("Error, only groups can be parents of safety alerts");
+        this.group = (Group) parent;
+    }
+
+    @Override
+    public UidIdentifiable getParent() {
+        return group;
+    }
+
+    @Override
+    public User getCreatedByUser() {
+        return activatedBy;
+    }
+
+    @Override
+    public Instant getDeadlineTime() {
+        return createdDateTime;
     }
 }

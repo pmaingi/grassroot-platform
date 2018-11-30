@@ -20,7 +20,7 @@ public interface TodoBroker {
     // methods for creating and modifying to-dos
     String create(TodoHelper todoHelper);
 
-    void cancel(String userUid, String todoUid, String reason);
+    void cancel(String userUid, String todoUid, boolean sendNotices, String reason);
 
     void extend(String userUid, String todoUid, Instant newDueDateTime);
 
@@ -49,7 +49,7 @@ public interface TodoBroker {
     // methods for retrieving to-dos
     List<Todo> fetchTodosForUser(String userUid, boolean forceIncludeCreated, boolean limitToNeedingResponse, Instant intervalStart, Instant intervalEnd, Sort sort);
 
-    Page<Todo> fetchPageOfTodosForUser(String userUid, boolean createdOnly, boolean openOnly, Pageable page);
+    Page<Todo> fetchPageOfTodosForUser(String userUid, boolean createdOnly, Pageable page);
 
     List<Todo> fetchTodosForGroup(String userUid, String groupUid, boolean limitToNeedingResponse, boolean limitToIncomplete,
                                   Instant start, Instant end, Sort sort);
@@ -67,5 +67,8 @@ public interface TodoBroker {
 
     // Handling reminders
     void sendScheduledReminder(String todoUid);
+
+    // we use this to populate the graph (temporary convenience)
+    List<Todo> loadAllTodos();
 
 }

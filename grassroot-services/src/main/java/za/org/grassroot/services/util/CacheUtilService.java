@@ -1,9 +1,8 @@
 package za.org.grassroot.services.util;
 
-import za.org.grassroot.core.domain.task.Event;
 import za.org.grassroot.core.domain.SafetyEvent;
 import za.org.grassroot.core.domain.User;
-import za.org.grassroot.core.enums.EventType;
+import za.org.grassroot.core.domain.task.Event;
 import za.org.grassroot.core.enums.UserInterfaceType;
 
 import java.util.List;
@@ -13,11 +12,11 @@ import java.util.List;
  */
 public interface CacheUtilService {
 
-    void clearRsvpCacheForUser(User user, EventType eventType);
+    void clearRsvpCacheForUser(String userUid);
 
     // void clearCacheForAllUsersInGroup(EventDTO event);
 
-    List<Event> getOutstandingResponseForUser(User user, EventType eventType);
+    List<Event> getOutstandingResponseForUser(String userUid);
 
     List<SafetyEvent> getOutstandingSafetyEventResponseForUser(User user);
 
@@ -25,7 +24,7 @@ public interface CacheUtilService {
 
     void clearSafetyEventResponseForUser(User user, SafetyEvent safetyEvent);
 
-    void putOutstandingResponseForUser(User user, EventType eventType, List<Event> outstandingRSVPs);
+    void putOutstandingResponseForUser(String userUid, List<Event> outstandingRSVPs);
 
     void putUssdMenuForUser(String phoneNumber, String urlToCache);
 
@@ -34,6 +33,10 @@ public interface CacheUtilService {
     String fetchUssdMenuForUser(String phoneNumber);
 
     void putUserLanguage(String phoneNumber, String language);
+
+    void putJoinAttempt(String userUid, int attempt);
+
+    int fetchJoinAttempts(String userUid);
 
     /**
      * Returns whether an entry is stored in the cache indicating the user has accessed the given interface type in the last hour
@@ -44,5 +47,9 @@ public interface CacheUtilService {
     boolean checkSessionStatus(String userUid, UserInterfaceType interfaceType);
 
     void setSessionOpen(String userUid, UserInterfaceType interfaceType);
+
+    List<PublicActivityLog> getCachedPublicActivity(PublicActivityType activityType);
+
+    void putCachedPublicActivity(PublicActivityType activityType, List<PublicActivityLog> activityLogs);
 
 }

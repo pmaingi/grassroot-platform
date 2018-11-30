@@ -8,6 +8,7 @@ import lombok.Getter;
 import za.org.grassroot.core.domain.User;
 import za.org.grassroot.core.domain.geo.GeoLocation;
 import za.org.grassroot.core.domain.geo.LocationHolder;
+import za.org.grassroot.core.enums.ActionLogType;
 import za.org.grassroot.core.enums.EventLogType;
 import za.org.grassroot.core.enums.EventRSVPResponse;
 import za.org.grassroot.core.enums.LocationSource;
@@ -107,6 +108,15 @@ public class EventLog implements TaskLog, LocationHolder {
 
     public Instant getCreatedDateTime() {
         return createdDateTime;
+    }
+
+    public Instant getCreationTime() {
+        return createdDateTime;
+    }
+
+    @Override
+    public ActionLogType getActionLogType() {
+        return ActionLogType.EVENT_LOG;
     }
 
     public User getUser() {

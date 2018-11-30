@@ -8,13 +8,17 @@ import org.springframework.data.domain.Sort;
 import org.springframework.security.access.AccessDeniedException;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
-import za.org.grassroot.core.domain.*;
+import za.org.grassroot.core.domain.BaseRoles;
+import za.org.grassroot.core.domain.Permission;
+import za.org.grassroot.core.domain.User;
+import za.org.grassroot.core.domain.UserLog;
 import za.org.grassroot.core.domain.association.AssociationRequestEvent;
 import za.org.grassroot.core.domain.association.GroupJoinRequest;
-import za.org.grassroot.core.domain.UserLog;
+import za.org.grassroot.core.domain.group.Group;
+import za.org.grassroot.core.domain.group.GroupJoinMethod;
 import za.org.grassroot.core.domain.notification.JoinRequestNotification;
 import za.org.grassroot.core.domain.notification.JoinRequestResultNotification;
-import za.org.grassroot.core.dto.MembershipInfo;
+import za.org.grassroot.core.dto.membership.MembershipInfo;
 import za.org.grassroot.core.enums.AssocRequestEventType;
 import za.org.grassroot.core.enums.AssocRequestStatus;
 import za.org.grassroot.core.enums.UserInterfaceType;
@@ -86,7 +90,7 @@ public class GroupJoinRequestManager implements GroupJoinRequestService {
         logger.info("Opening new group join request: requestor={}, group={}, description={}", requestor, group, description);
 
         Instant time = Instant.now();
-        GroupJoinRequest request = new GroupJoinRequest(requestor, group, (description != null) ? description : null);
+        GroupJoinRequest request = new GroupJoinRequest(requestor, group, description);
         groupJoinRequestRepository.save(request);
 
         String message = messageAssemblingService.createGroupJoinRequestMessage(group.getJoinApprover(), request);

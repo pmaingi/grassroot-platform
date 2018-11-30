@@ -2,8 +2,8 @@ package za.org.grassroot.core.util;
 
 import com.google.i18n.phonenumbers.NumberParseException;
 import com.google.i18n.phonenumbers.Phonenumber;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import lombok.extern.slf4j.Slf4j;
+import org.apache.commons.lang3.StringUtils;
 
 import java.util.*;
 import java.util.regex.Matcher;
@@ -12,10 +12,8 @@ import java.util.regex.Pattern;
 /**
  * @author Lesetse Kimwaga
  */
-
+@Slf4j
 public class PhoneNumberUtil {
-
-    private static final Logger log = LoggerFactory.getLogger(PhoneNumberUtil.class);
 
     public static String convertPhoneNumber(String inputString) throws InvalidPhoneNumberException {
         try {
@@ -50,7 +48,11 @@ public class PhoneNumberUtil {
     }
 
     public static String invertPhoneNumber(String storedNumber) {
-        return invertPhoneNumber(storedNumber, "");
+        if (storedNumber != null) {
+            return invertPhoneNumber(storedNumber, "");
+        } else {
+            return null;
+        }
     }
 
     public static String formattedNumber(String storedNumber) {
@@ -59,7 +61,7 @@ public class PhoneNumberUtil {
                 Phonenumber.PhoneNumber zaNumber = util.parse(storedNumber, "ZA");
                 return util.format(zaNumber, com.google.i18n.phonenumbers.PhoneNumberUtil.PhoneNumberFormat.NATIONAL);
         } catch (NumberParseException e) {
-                log.info("Error parsing stored number! Returning the number given to us");
+                log.info("Error parsing stored number {}! Returning the number given to us", storedNumber);
                 return storedNumber;
         }
     }
@@ -110,7 +112,9 @@ public class PhoneNumberUtil {
         com.google.i18n.phonenumbers.PhoneNumberUtil phoneNumberUtil = com.google.i18n.phonenumbers.PhoneNumberUtil.getInstance();
 
         try {
+            log.debug("Input number correct? : {}", inputNumber.trim());
             Phonenumber.PhoneNumber phoneNumber = phoneNumberUtil.parse(inputNumber.trim(), "ZA");
+            log.debug("Do we have a phone number? : {}", phoneNumber);
             isNumberValid = (phoneNumberUtil.isValidNumber(phoneNumber) && inputNumber.length() >= 10);
         } catch (NumberParseException e) {
             isNumberValid = false;
@@ -118,6 +122,23 @@ public class PhoneNumberUtil {
 
         return isNumberValid;
 
+    }
+
+    public static boolean isPhoneNumberSouthAfrican(String inputNumber) {
+        if (StringUtils.isEmpty(inputNumber))
+            return false;
+
+        final String shapedNumber = "+" + inputNumber;
+        com.google.i18n.phonenumbers.PhoneNumberUtil phoneNumberUtil = com.google.i18n.phonenumbers.PhoneNumberUtil.getInstance();
+
+        try {
+            log.debug("Testing whether SA: {}", inputNumber);
+            Phonenumber.PhoneNumber phoneNumber = phoneNumberUtil.parse(shapedNumber, "ZA");
+            log.debug("Resulting phone number: {}", phoneNumber);
+            return phoneNumber != null && phoneNumber.getCountryCode() == 27;
+        } catch (NumberParseException e) {
+            return false;
+        }
     }
 
 

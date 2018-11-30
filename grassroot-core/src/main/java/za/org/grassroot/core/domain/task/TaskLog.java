@@ -3,7 +3,7 @@ package za.org.grassroot.core.domain.task;
 import za.org.grassroot.core.domain.ActionLog;
 import za.org.grassroot.core.domain.User;
 import za.org.grassroot.core.domain.geo.GeoLocation;
-import za.org.grassroot.core.domain.task.Task;
+import za.org.grassroot.core.enums.ActionLogType;
 
 /**
  * Created by luke on 2017/03/10.
@@ -12,6 +12,11 @@ import za.org.grassroot.core.domain.task.Task;
 public interface TaskLog<T extends Task> extends ActionLog {
 
     User getUser();
+
+    @Override
+    default ActionLogType getActionLogType() {
+        return ActionLogType.TASK_LOG;
+    }
 
     T getTask();
 

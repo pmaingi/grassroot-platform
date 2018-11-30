@@ -1,183 +1,103 @@
 package za.org.grassroot.services.campaign;
 
 
-import za.org.grassroot.core.domain.User;
 import za.org.grassroot.core.domain.campaign.Campaign;
 import za.org.grassroot.core.domain.campaign.CampaignActionType;
 import za.org.grassroot.core.domain.campaign.CampaignMessage;
 import za.org.grassroot.core.domain.campaign.CampaignType;
+import za.org.grassroot.core.domain.media.MediaFileRecord;
 import za.org.grassroot.core.enums.MessageVariationAssignment;
 import za.org.grassroot.core.enums.UserInterfaceType;
 
 import java.time.Instant;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.Set;
 
 public interface CampaignBroker {
 
-    List<Campaign> getCampaignsCreatedByUser(String userUid);
+    Campaign load(String campaignUid);
 
+    Set<Locale> getCampaignLanguages(String campaignUid);
 
-    /**
-     * Get Campaign information by campaign code
-     * @param campaignCode
-     * @return - Campaign details
-     */
-    Campaign getCampaignDetailsByCode(String campaignCode);
+    // passing null to and of the last three will set them to defaults
+    CampaignMessage getOpeningMessage(String campaignUid, Locale locale, UserInterfaceType interfaceType, MessageVariationAssignment variation);
 
-    /**
-     * Get Campaign information by name of the campaign
-     * @param campaignName -name of campaign
-     * @return
-     */
-    Campaign getCampaignDetailsByName(String campaignName);
+    void recordEngagement(String campaignUid, String userUid, UserInterfaceType channel, String logDesc);
 
-    /**
-     * Get Campaign message using campaign name
-     * @param campaignName - name
-     * @param assignment - message use case,eg. test
-     * @return - set of messages linked to campaign
-     */
-    Set<CampaignMessage> getCampaignMessagesByCampaignName(String campaignName, MessageVariationAssignment assignment, UserInterfaceType type, Locale locale);
+    CampaignMessage loadCampaignMessage(String messageUid, String userUid);
 
-    /**
-     * Get campaign message using campaign code and language
-     * @param campaignCode - campaign code
-     * @param assignment - message use cases
-     * @param locale - locale  for message
-     * @return
-     */
-    Set<CampaignMessage> getCampaignMessagesByCampaignCodeAndLocale(String campaignCode, MessageVariationAssignment assignment, Locale locale, UserInterfaceType type);
+    CampaignMessage findCampaignMessage(String campaignUid, String priorMsgUid, CampaignActionType takenAction);
 
-    /**
-     * Get campaign message using campaign code and language
-     * @param campaignCode - campaign code
-     * @param assignment - message use case test, production etc
-     * @param locale
-     * @return
-     */
-    Set<CampaignMessage> getCampaignMessagesByCampaignNameAndLocale(String campaignCode, MessageVariationAssignment assignment, Locale locale, UserInterfaceType type);
+    List<CampaignMessage> findCampaignMessage(String campaignUid, CampaignActionType takenAction, Locale locale, UserInterfaceType channel);
 
-    /**
-     *
-     * @param campaignCode
-     * @param assignment
-     * @param messageTag
-     * @return
-     */
-    Set<CampaignMessage> getCampaignMessagesByCampaignCodeAndMessageTag(String campaignCode, MessageVariationAssignment assignment, String messageTag, UserInterfaceType type, Locale locale);
+    List<Campaign> getCampaignsManagedByUser(String userUid);
 
-    /**
-     *
-     * @param campaignName
-     * @param assignment
-     * @param messageTag
-     * @return
-     */
-    Set<CampaignMessage> getCampaignMessagesByCampaignNameAndMessageTag(String campaignName, MessageVariationAssignment assignment, String messageTag, UserInterfaceType type,Locale locale);
+    List<Campaign> getCampaignsCreatedLinkedToGroup(String groupUid);
 
-    /**
-     *
-     * @param campaignName
-     * @param campaignCode
-     * @param description
-     * @param userUid
-     * @param startDate
-     * @param endDate
-     * @return
-     */
-    Campaign createCampaign(String campaignName, String campaignCode, String description, String userUid, Instant startDate, Instant endDate, List<String> campaignTags, CampaignType campaignType,String url);
+    Campaign getCampaignDetailsByCode(String campaignCode, String userUid, boolean storeLog, UserInterfaceType channel);
 
-    /**
-     *
-     * @param campaignName
-     * @param campaignCode
-     * @param description
-     * @param createUser
-     * @param groupId
-     * @param startDate
-     * @param endDate
-     * @param campaignTags
-     * @return
-     */
-    Campaign createCampaign(String campaignName, String campaignCode, String description, User createUser, Long groupId, Instant startDate, Instant endDate, List<String> campaignTags, CampaignType campaignType);
-    /**
-     *
-     * @param campaignCode
-     * @param campaignMessage
-     * @param messageLocale
-     * @param assignment
-     * @param interfaceType
-     * @param createUser
-     * @return
-     */
-    Campaign addCampaignMessage(String campaignCode, String campaignMessage, Locale messageLocale, MessageVariationAssignment assignment, UserInterfaceType interfaceType, User createUser, List<String> messageTags);
+    Set<String> getActiveCampaignCodes();
 
-    /**
-     *
-     * @param campaignCode
-     * @param tags
-     * @return
-     */
-    Campaign addCampaignTags(String campaignCode, List<String> tags);
+    boolean isCodeTaken(String proposedCode, String campaignUid);
 
-    /**
-     *
-     * @param tag
-     * @return
-     */
-    Campaign getCampaignByTag(String tag);
+    Campaign findCampaignByJoinWord(String joinWord, String userUid, UserInterfaceType channel);
 
-    /**
-     *
-     * @param campaignCode
-     * @param groupUid
-     * @return
-     */
-    Campaign linkCampaignToMasterGroup(String campaignCode, String groupUid, String userUid);
+    List<Campaign> broadSearchForCampaign(String userId, String searchTerm);
 
-    /**
-     *
-     * @param campaignCode
-     * @param groupName
-     * @param userUid
-     * @return
-     */
-    Campaign createMasterGroupForCampaignAndLinkCampaign(String campaignCode, String groupName, String userUid);
+    // returns all in lower case
+    Map<String, String> getActiveCampaignJoinWords(); // todo : cache this
 
-    /**
-     *
-     * @param campaignCode
-     * @param assignment
-     * @param channel
-     * @param actionType
-     * @param inputNumber
-     * @param locale
-     * @return
-     */
-    CampaignMessage getCampaignMessageByCampaignCodeAndActionType(String campaignCode, MessageVariationAssignment assignment,UserInterfaceType channel, CampaignActionType actionType, String inputNumber, Locale locale);
+    boolean isTextJoinWordTaken(String joinWord, String campaignUid);
 
-    /**
-     *
-     * @param campaignCode
-     * @param phoneNumber
-     * @return
-     */
-    Campaign addUserToCampaignMasterGroup(String campaignCode,String phoneNumber);
+    void signPetition(String campaignUid, String userUid, UserInterfaceType channel);
 
-    /**
-     *
-     * @param campaignCode
-     * @param parentMessageUid
-     * @param actionType
-     * @param actionMessage
-     * @param actionMessageLocale
-     * @param actionMessageAssignment
-     * @param interfaceType
-     * @param createUser
-     * @param actionMessageTags
-     * @return
-     */
-    Campaign addActionToCampaignMessage(String campaignCode, String parentMessageUid,CampaignActionType actionType, String actionMessage, Locale actionMessageLocale, MessageVariationAssignment actionMessageAssignment, UserInterfaceType interfaceType, User createUser, Set<String> actionMessageTags);
+    void sendShareMessage(String campaignUid, String sharingUserUid, String sharingNumber, String defaultTemplate, UserInterfaceType channel);
+
+    // note: at present we _do not_ record the ID of the media file because (a) it is purposely external and (b) this is just tracking numbers
+    void recordUserSentMedia(String campaignUid, String userUid, UserInterfaceType channel);
+
+    boolean isUserInCampaignMasterGroup(String campaignUid, String userUid);
+
+    Campaign addUserToCampaignMasterGroup(String campaignUid, String userUid, UserInterfaceType channel);
+
+    boolean doesGroupHaveActiveCampaign(String groupUid);
+
+    void setUserJoinTopic(String campaignUid, String userUid, String joinTopic, UserInterfaceType channel);
+
+    boolean hasUserEngaged(String campaignUid, String userUid);
+
+    boolean hasUserShared(String campaignUid, String userUid);
+
+    boolean hasUserSentMedia(String campaignUid, String userUid);
+
+    String getMessageOfType(String campaignUid, CampaignActionType actionType, String userUid, UserInterfaceType channel);
+
+    // modifying and adding
+    Campaign create(String campaignName, String campaignCode, String description, String userUid, String masterGroupUid, Instant startDate,
+                    Instant endDate, List<String> joinTopics, CampaignType campaignType, String url, boolean smsShare, long smsLimit, String imageKey);
+
+    Campaign loadForModification(String userUid, String campaignUid);
+
+    Campaign setCampaignMessages(String userUid, String campaignUid, Set<CampaignMessageDTO> campaignMessages);
+
+    Campaign updateMasterGroup(String campaignUid, String groupUid, String userUid);
+
+    void updateCampaignDetails(String userUid, String campaignUid, String name, String description, String mediaFileUid,
+                               boolean removeImage, Instant endDate, String newCode, String newTextWord, String landingUrl, String petitionApi, List<String> joinTopics);
+
+    void alterSmsSharingSettings(String userUid, String campaignUid, boolean smsEnabled, Long smsBudgetNumberTexts,
+                                 Set<CampaignMessageDTO> sharingMessages);
+
+    void updateCampaignType(String userUid, String campaignUid, CampaignType newType, Set<CampaignMessageDTO> revisedMessages);
+
+    void setCampaignImage(String userUid, String campaignUid, String mediaFileKey);
+
+    void endCampaign(String userUid, String campaignUid);
+
+    void updateCampaignDefaultLanguage(String userUid, String campaignUid, Locale defaultLanguage);
+
+    List<MediaFileRecord> fetchInboundCampaignMediaDetails(String userUid, String campaignUid);
+
 }

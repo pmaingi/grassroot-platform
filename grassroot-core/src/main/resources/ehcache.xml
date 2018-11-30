@@ -17,6 +17,7 @@
            eternal="false"
            timeToIdleSeconds="3600">
     </cache>
+
     <cache name="user_language"
            maxEntriesLocalHeap="2000"
            eternal="false"
@@ -34,12 +35,58 @@
            timeToIdleSeconds="3600">
     </cache>
 
-    <cache name="groupChatSettings"
-           maxEntriesLocalHeap="10000"
+    <cache name="public_activity_logs"
+           maxEntriesLocalHeap="100"
            eternal="false"
-           timeToIdleSeconds="300" timeToLiveSeconds="600"
-           memoryStoreEvictionPolicy="LFU"
-           transactionalMode="off">
+           timeToLiveSeconds="300" />
+
+    <cache name="group_stats_member_count"
+           maxEntriesLocalHeap="2000"
+           eternal="false"
+           timeToIdleSeconds="900">
+    </cache>
+
+
+    <cache name="group_stats_provinces"
+           maxEntriesLocalHeap="2000"
+           eternal="false"
+           timeToIdleSeconds="900">
+    </cache>
+
+    <cache name="group_stats_sources"
+           maxEntriesLocalHeap="2000"
+           eternal="false"
+           timeToIdleSeconds="900">
+    </cache>
+
+    <cache name="group_stats_organisations"
+           maxEntriesLocalHeap="2000"
+           eternal="false"
+           timeToIdleSeconds="900">
+    </cache>
+
+    <cache name="group_stats_member-details"
+           maxEntriesLocalHeap="2000"
+           eternal="false"
+           timeToIdleSeconds="900">
+    </cache>
+
+    <cache name="group_stats_topic_interests"
+           maxEntriesLocalHeap="2000"
+           eternal="false"
+           timeToIdleSeconds="900">
+    </cache>
+
+    <cache name="user_notifications"
+           maxEntriesLocalHeap="2000"
+           eternal="false"
+           timeToIdleSeconds="10">
+    </cache>
+
+    <cache name="user_join_group"
+           maxEntriesLocalHeap="2000"
+           eternal="false"
+           timeToLiveSeconds="60">
     </cache>
 
 </ehcache>

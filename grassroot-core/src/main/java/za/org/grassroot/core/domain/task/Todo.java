@@ -3,10 +3,11 @@ package za.org.grassroot.core.domain.task;
 import lombok.Getter;
 import lombok.Setter;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
-import za.org.grassroot.core.domain.Group;
 import za.org.grassroot.core.domain.JpaEntityType;
 import za.org.grassroot.core.domain.User;
+import za.org.grassroot.core.domain.group.Group;
 import za.org.grassroot.core.enums.TaskType;
 import za.org.grassroot.core.enums.TodoCompletionConfirmType;
 import za.org.grassroot.core.util.DateTimeUtil;
@@ -23,7 +24,7 @@ import java.util.stream.Stream;
 /**
  * Created by aakilomar on 12/3/15.
  */
-@Entity @Getter @Slf4j
+@Entity @Getter @Slf4j @Transactional
 @Table(name = "action_todo",
         indexes = {
                 @Index(name = "idx_action_todo_group_id", columnList = "parent_group_id"),
@@ -69,19 +70,28 @@ public class Todo extends AbstractTodoEntity implements Task<TodoContainer>, Vot
     @Column(name = "recurring_interval")
     @Getter @Setter private Long recurInterval;
 
+    // we use these just to simplify some internal methods, hence transient - actual logic is to persist via eventlogs
+    @Transient
+    @Getter @Setter private String imageUrl;
+
     private Todo() {
         // for JPA
     }
 
-    public Todo(User createdByUser, TodoContainer parent, TodoType todoType, String description, Instant dueByDate) {
-        super(createdByUser, parent, todoType, description, dueByDate, parent.getTodoReminderMinutes(), true);
+    public Todo(User createdByUser, TodoContainer parent, TodoType todoType, String subject, Instant dueByDate) {
+        super(createdByUser, parent, todoType, subject, dueByDate, parent.getTodoReminderMinutes(), false);
 
         this.ancestorGroup = parent.getThisOrAncestorGroup();
         this.ancestorGroup.addDescendantTodo(this);
         this.cancelled = false;
         this.completed = false;
 
-        calculateScheduledReminderTime();
+        this.reminderActive = !EventReminderType.DISABLED.equals(parent.getReminderType()) &&
+                parent.getTodoReminderMinutes() != 0;
+
+        if (this.reminderActive) {
+            calculateScheduledReminderTime();
+        }
     }
 
     public static Todo makeEmpty() {
@@ -92,9 +102,8 @@ public class Todo extends AbstractTodoEntity implements Task<TodoContainer>, Vot
 
     public LocalDateTime getReminderTimeAtSAST() { return nextNotificationTime.atZone(DateTimeUtil.getSAST()).toLocalDateTime(); }
 
-    public void calculateScheduledReminderTime() {
-        this.nextNotificationTime= reminderActive
-                ? DateTimeUtil.restrictToDaytime(actionByDate.minus(reminderMinutes, ChronoUnit.MINUTES), actionByDate,
+    private void calculateScheduledReminderTime() {
+        this.nextNotificationTime= reminderActive ? DateTimeUtil.restrictToDaytime(actionByDate.minus(reminderMinutes, ChronoUnit.MINUTES), actionByDate,
                 DateTimeUtil.getSAST()) : null;
 
         // if reminder time is already in the past (e.g., set to 1 week but deadline in 5 days), try set it to tomorrow, else set it to deadline
@@ -129,6 +138,11 @@ public class Todo extends AbstractTodoEntity implements Task<TodoContainer>, Vot
     }
 
     @Override
+    public boolean hasImage() {
+        return !StringUtils.isEmpty(imageUrl);
+    }
+
+    @Override
     public Set<User> fetchAssignedMembersCollection() {
         return assignments.stream().map(TodoAssignment::getUser).collect(Collectors.toSet());
     }
@@ -137,6 +151,17 @@ public class Todo extends AbstractTodoEntity implements Task<TodoContainer>, Vot
     public void putAssignedMembersCollection(Set<User> assignedMembersCollection) {
         this.assignments = assignedMembersCollection.stream()
                 .map(u -> new TodoAssignment(this, u, true, false, false)).collect(Collectors.toSet());
+    }
+
+    @Override
+    public void setTags(String[] tags) {
+        log.info("Tags not yet implemented in todos");
+    }
+
+    @Override
+    public String[] getTags() {
+        log.info("Get tags called in todo");
+        return new String[0];
     }
 
     @Override
@@ -247,6 +272,7 @@ public class Todo extends AbstractTodoEntity implements Task<TodoContainer>, Vot
         return "Todo{" +
                 "id=" + id +
                 ", uid=" + uid +
+                ", type=" + type +
                 ", completed=" + completed +
                 ", message='" + message + '\'' +
                 ", actionByDate=" + actionByDate +

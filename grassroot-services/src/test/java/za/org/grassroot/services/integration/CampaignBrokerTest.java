@@ -5,32 +5,33 @@ import org.junit.Before;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.test.autoconfigure.orm.jpa.DataJpaTest;
 import org.springframework.security.test.context.support.WithMockUser;
-import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.ContextConfiguration;
 import org.springframework.test.context.junit4.SpringRunner;
-import org.springframework.transaction.annotation.Transactional;
-import za.org.grassroot.core.GrassrootApplicationProfiles;
-import za.org.grassroot.core.domain.Group;
 import za.org.grassroot.core.domain.User;
+import za.org.grassroot.core.domain.account.Account;
 import za.org.grassroot.core.domain.campaign.Campaign;
 import za.org.grassroot.core.domain.campaign.CampaignActionType;
-import za.org.grassroot.core.domain.campaign.CampaignMessage;
 import za.org.grassroot.core.domain.campaign.CampaignType;
-import za.org.grassroot.core.enums.MessageVariationAssignment;
+import za.org.grassroot.core.domain.group.Group;
+import za.org.grassroot.core.enums.AccountType;
 import za.org.grassroot.core.enums.UserInterfaceType;
+import za.org.grassroot.core.repository.AccountRepository;
 import za.org.grassroot.core.repository.GroupRepository;
 import za.org.grassroot.core.repository.UserRepository;
+import za.org.grassroot.core.util.DateTimeUtil;
+import za.org.grassroot.services.ServicesTestConfig;
 import za.org.grassroot.services.campaign.CampaignBroker;
+import za.org.grassroot.services.campaign.CampaignMessageDTO;
+import za.org.grassroot.services.campaign.MessageLanguagePair;
 
 import java.time.Instant;
+import java.util.Collections;
 import java.util.Locale;
-import java.util.Set;
 
-@RunWith(SpringRunner.class)
-@ContextConfiguration(classes = TestContextConfig.class)
-@ActiveProfiles(GrassrootApplicationProfiles.INMEMORY)
-@Transactional
+@RunWith(SpringRunner.class) @DataJpaTest
+@ContextConfiguration(classes = ServicesTestConfig.class)
 @WithMockUser(username = "0605550000", roles={"SYSTEM_ADMIN"})
 public class CampaignBrokerTest {
 
@@ -41,70 +42,58 @@ public class CampaignBrokerTest {
     private UserRepository userRepository;
 
     @Autowired
+    private AccountRepository accountRepository;
+
+    @Autowired
     private GroupRepository groupRepository;
 
     private User testUser;
     private Group testGroup;
+    private Account testAccount;
 
     @Before
     public void setUp(){
         userRepository.deleteAllInBatch();
         String userNumber = "0605550000";
-        testUser = new User(userNumber, "test user");
+        testUser = new User(userNumber, "test user", null);
         userRepository.save(testUser);
         String groupName = "testGroup";
         testGroup = groupRepository.save(new Group(groupName, testUser));
+        testAccount = accountRepository.save(new Account(testUser, "test", AccountType.ENTERPRISE, testUser));
+        testUser.setPrimaryAccount(testAccount);
+        userRepository.save(testUser);
     }
 
 
     @Test
     public void testCreateAndUpdateCampaign(){
-       Campaign campaign = campaignBroker.createCampaign("national campaign","234","our national campaign",testUser.getUid(), Instant.now(), java.time.Instant.MAX, null, CampaignType.Information,null);
+        Campaign campaign = campaignBroker.create("national campaign", "234", "our national campaign", testUser.getUid(),
+                testGroup.getUid(), Instant.now(), DateTimeUtil.getVeryLongAwayInstant(), null, CampaignType.INFORMATION,null, false, 0, null);
         Assert.assertNotNull(campaign);
         Assert.assertNotNull(campaign.getCreatedByUser().getPhoneNumber(), "0605550000");
         Assert.assertNotNull(campaign.getCampaignCode(), "234");
-        Assert.assertNotNull(campaign.getCampaignName(), "national campaign");
+        Assert.assertNotNull(campaign.getName(), "national campaign");
 
-        Campaign updatedCampaign = campaignBroker.addCampaignMessage("234","Test message", Locale.ENGLISH, MessageVariationAssignment.CONTROL, UserInterfaceType.USSD, testUser, null);
+        CampaignMessageDTO messageDTO = new CampaignMessageDTO();
+        messageDTO.setChannel(UserInterfaceType.USSD);
+        messageDTO.setMessages(Collections.singletonList(new MessageLanguagePair(Locale.ENGLISH, "Test message")));
+        messageDTO.setLinkedActionType(CampaignActionType.OPENING);
+        messageDTO.setMessageId("test-message-ID");
+
+        // "Test message", Locale.ENGLISH, MessageVariationAssignment.CONTROL, UserInterfaceType.USSD, testUser, null
+        Campaign updatedCampaign = campaignBroker
+                .setCampaignMessages(testUser.getUid(), campaign.getUid(), Collections.singleton(messageDTO));
         Assert.assertNotNull(updatedCampaign);
-        Assert.assertEquals(updatedCampaign.getCampaignName(), "national campaign");
+        Assert.assertEquals(updatedCampaign.getName(), "national campaign");
         Assert.assertEquals(updatedCampaign.getCampaignMessages().size(), 1);
         Assert.assertEquals(updatedCampaign.getCampaignMessages().iterator().next().getMessage(), "Test message");
         Assert.assertEquals(updatedCampaign.getCampaignMessages().iterator().next().getChannel(), UserInterfaceType.USSD);
         Assert.assertEquals(updatedCampaign.getCampaignMessages().iterator().next().getLocale(), Locale.ENGLISH);
 
-        Campaign reUpdatedCampaign = campaignBroker.addActionToCampaignMessage("234", updatedCampaign.getCampaignMessages().iterator().next().getUid(), CampaignActionType.JOIN_MASTER_GROUP,"test action message",Locale.ENGLISH,MessageVariationAssignment.CONTROL,UserInterfaceType.USSD, testUser,null);
-        Assert.assertNotNull(reUpdatedCampaign);
-        Assert.assertNotNull(reUpdatedCampaign.getCampaignMessages().iterator().next().getCampaignMessageActionSet());
-        Assert.assertEquals(reUpdatedCampaign.getCampaignMessages().iterator().next().getCampaignMessageActionSet().size(), 1);
-        Assert.assertEquals(reUpdatedCampaign.getCampaignMessages().iterator().next().getCampaignMessageActionSet().iterator().next().getActionType(), CampaignActionType.JOIN_MASTER_GROUP);
-
-        Campaign campaignByName = campaignBroker.getCampaignDetailsByName("national campaign");
-        Assert.assertNotNull(campaignByName);
-        Assert.assertEquals(campaignByName.getCampaignName(), "national campaign");
-
-        Set<CampaignMessage> campaignMessageSet = campaignBroker.getCampaignMessagesByCampaignName("national campaign",MessageVariationAssignment.CONTROL,UserInterfaceType.USSD, Locale.ENGLISH);
-        Assert.assertNotNull(campaignMessageSet);
-
-        Set<CampaignMessage> campaignMessageSet0 = campaignBroker.getCampaignMessagesByCampaignNameAndLocale("national campaign",MessageVariationAssignment.CONTROL, Locale.ENGLISH, UserInterfaceType.USSD);
-        Assert.assertNotNull(campaignMessageSet0);
-        Assert.assertEquals(campaignMessageSet0.size(), 1);
-
-        Set<CampaignMessage> campaignMessageSet1 = campaignBroker.getCampaignMessagesByCampaignCodeAndLocale("234",MessageVariationAssignment.CONTROL, Locale.ENGLISH,UserInterfaceType.USSD);
-        Assert.assertNotNull(campaignMessageSet1);
-        Assert.assertEquals(campaignMessageSet1.size(), 1);
-
-        Campaign linkedCampaign = campaignBroker.linkCampaignToMasterGroup("234",testGroup.getUid(),testUser.getUid());
+        Campaign linkedCampaign = campaignBroker.updateMasterGroup(campaign.getUid(), testGroup.getUid(),testUser.getUid());
         Assert.assertNotNull(linkedCampaign);
         Assert.assertNotNull(linkedCampaign.getMasterGroup());
         Assert.assertEquals(linkedCampaign.getMasterGroup().getId(),testGroup.getId());
-
-        Campaign cam = campaignBroker.addUserToCampaignMasterGroup("234","0605550000");
-        Assert.assertNotNull(cam);
-        Assert.assertNotNull(cam.getMasterGroup());
-        Assert.assertNotNull(cam.getMasterGroup().getMembers());
-        Assert.assertEquals(cam.getMasterGroup().getMembers().size(), 1);
-        Assert.assertEquals(cam.getMasterGroup().getMembers().iterator().next().getPhoneNumber(),"27605550000");
     }
 
 }

@@ -3,7 +3,7 @@ package za.org.grassroot.services.task;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.data.jpa.domain.Specifications;
+import org.springframework.data.jpa.domain.Specification;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
 import za.org.grassroot.core.domain.Notification;
@@ -12,10 +12,10 @@ import za.org.grassroot.core.domain.notification.EventResponseNotification;
 import za.org.grassroot.core.domain.task.Event;
 import za.org.grassroot.core.domain.task.EventLog;
 import za.org.grassroot.core.dto.ResponseTotalsDTO;
+import za.org.grassroot.core.enums.DeliveryRoute;
 import za.org.grassroot.core.enums.EventLogType;
 import za.org.grassroot.core.enums.EventRSVPResponse;
 import za.org.grassroot.core.enums.EventType;
-import za.org.grassroot.core.enums.UserMessagingPreference;
 import za.org.grassroot.core.repository.EventLogRepository;
 import za.org.grassroot.core.repository.EventRepository;
 import za.org.grassroot.core.repository.UserRepository;
@@ -27,6 +27,7 @@ import za.org.grassroot.services.util.LogsAndNotificationsBroker;
 import za.org.grassroot.services.util.LogsAndNotificationsBundle;
 
 import java.time.Instant;
+import java.util.Collections;
 import java.util.List;
 import java.util.Objects;
 
@@ -78,11 +79,12 @@ public class EventLogBrokerImpl implements EventLogBroker {
         User user = userRepository.findOneByUid(userUid);
 
         log.trace("rsvpForEvent...event..." + event.getId() + "...user..." + user.getPhoneNumber() + "...rsvp..." + rsvpResponse.toString());
+        cacheUtilService.clearRsvpCacheForUser(user.getUid());
 
         if (!hasUserRespondedToEvent(event, user)) {
             EventLog eventLog = createEventLog(EventLogType.RSVP, event.getUid(), user.getUid(), rsvpResponse);
             // clear rsvp cache for user
-            cacheUtilService.clearRsvpCacheForUser(user, event.getEventType());
+            log.info("clearing rsvp cache for user");
 
             // see if everyone voted, if they did expire the vote so that the results are sent out
             if (event.getEventType().equals(EventType.VOTE)) {
@@ -90,6 +92,7 @@ public class EventLogBrokerImpl implements EventLogBroker {
             } else if (event.getEventType().equals(EventType.MEETING) && !user.equals(event.getCreatedByUser())) {
                 generateMeetingResponseMessage(event, eventLog, rsvpResponse);
             }
+            logsAndNotificationsBroker.updateCache(Collections.singleton(eventLog));
         } else {
             // allow the user to change their rsvp / vote as long as meeting is open (which it is at this stage else exception thrown above)
             EventLog eventLog = eventLogRepository.findByEventAndUserAndEventLogType(event, user, EventLogType.RSVP);
@@ -98,6 +101,7 @@ public class EventLogBrokerImpl implements EventLogBroker {
             if (event.getEventType().equals(EventType.MEETING) && !user.equals(event.getCreatedByUser())) {
                 generateMeetingResponseMessage(event, eventLog, rsvpResponse);
             }
+            // not updating public activity cache, as this is just an adjustment
         }
     }
 
@@ -112,12 +116,11 @@ public class EventLogBrokerImpl implements EventLogBroker {
 
     @Override
     public boolean hasUserRespondedToEvent(Event event, User user) {
-        log.info("Checking is user has responded to: {}", event.getName());
-        long count = eventLogRepository.count(Specifications
+        long count = eventLogRepository.count(Specification
                 .where(EventLogSpecifications.forEvent(event))
                 .and(EventLogSpecifications.forUser(user))
                 .and(EventLogSpecifications.isResponseToAnEvent()));
-        log.info("Count of responses: {}", count);
+        log.info("Checking user has responded to: {}, with count: {}", event.getName(), count);
         return count > 0;
     }
 
@@ -133,12 +136,15 @@ public class EventLogBrokerImpl implements EventLogBroker {
     @Transactional(readOnly = true)
     public ResponseTotalsDTO getResponseCountForEvent(Event event) {
         List<EventLog> responseEventLogs = eventLogRepository.findByEventAndEventLogType(event, EventLogType.RSVP);
+        if (event == null) {
+            log.error("getting responses on non-existing event (must be broken client), returning empty");
+        }
         return new ResponseTotalsDTO(responseEventLogs, event);
     }
 
     private void generateMeetingResponseMessage(Event event, EventLog eventLog, EventRSVPResponse rsvpResponse) {
-        if (event.getCreatedByUser().getMessagingPreference().equals(UserMessagingPreference.ANDROID_APP)) {
-            String message = messageAssemblingService.createEventResponseMessage(event.getCreatedByUser(), event, rsvpResponse);
+        if (event.getCreatedByUser().getMessagingPreference().equals(DeliveryRoute.ANDROID_APP)) {
+            String message = messageAssemblingService.createEventResponseMessage(eventLog.getUser(), event, rsvpResponse);
             Notification notification = new EventResponseNotification(event.getCreatedByUser(), message, eventLog);
             LogsAndNotificationsBundle bundle = new LogsAndNotificationsBundle();
             bundle.addNotification(notification);

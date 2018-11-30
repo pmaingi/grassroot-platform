@@ -1,22 +1,31 @@
 package za.org.grassroot.services.async;
 
+import za.org.grassroot.core.domain.UserLog;
+import za.org.grassroot.core.domain.geo.GeoLocation;
+import za.org.grassroot.core.enums.LocationSource;
 import za.org.grassroot.core.enums.UserInterfaceType;
 import za.org.grassroot.core.enums.UserLogType;
 
 import java.time.Instant;
+import java.util.Set;
 
 /**
  * Created by luke on 2016/02/22.
  */
 public interface AsyncUserLogger {
 
+    void logUserLogin(String userUid, UserInterfaceType channel);
+
     /**
      * Generic method to record a user event, typically user creation, language change, etc.
      * @param userUid The uid of the User entity to save
      * @param userLogType The type of user log to be recorded
      * @param description An optional description field (can be null)
+     * @param channel The channel used, if known
      */
-    void recordUserLog(String userUid, UserLogType userLogType, String description);
+    void recordUserLog(String userUid, UserLogType userLogType, String description, UserInterfaceType channel);
+
+    void storeUserLogs(Set<UserLog> userLogSet);
 
     /**
      * Records a user logging on to the system, to be used for reporting & analysis
@@ -24,6 +33,14 @@ public interface AsyncUserLogger {
      * @param interfaceType The interface used; must be non-null
      */
     void recordUserSession(String userUid, UserInterfaceType interfaceType);
+
+    /**
+     * Records where a user is; only used when explicitly asking user for location
+     * @param userUid The uid of the user
+     * @param location The location of the user
+     * @param locationSource How the location is obtained
+     */
+    void recordUserLocation(String userUid, GeoLocation location, LocationSource locationSource, UserInterfaceType channel);
 
     /**
      * Records the user accessing a USSD menu
@@ -69,13 +86,11 @@ public interface AsyncUserLogger {
      */
     boolean hasSkippedName(String userUid);
 
-    /**
-     * Check if the user has skipped over naming a group in the past, to avoid repeated asked
-     * @param userUid
-     * @param groupUid
-     * @return
-     */
-    boolean hasSkippedNamingGroup(String userUid, String groupUid);
+    boolean hasSkippedProvince(String userUid);
+
+    boolean hasChangedLanguage(String userUid);
 
     boolean hasUsedJoinCodeRecently(String userUid);
+
+    void removeAllUserInfoLogs(String userUid);
 }

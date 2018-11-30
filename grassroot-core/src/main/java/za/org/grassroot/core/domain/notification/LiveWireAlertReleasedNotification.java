@@ -1,7 +1,7 @@
 package za.org.grassroot.core.domain.notification;
 
-import za.org.grassroot.core.domain.livewire.LiveWireLog;
 import za.org.grassroot.core.domain.User;
+import za.org.grassroot.core.domain.livewire.LiveWireLog;
 import za.org.grassroot.core.enums.AlertPreference;
 import za.org.grassroot.core.enums.NotificationDetailedType;
 
@@ -16,7 +16,7 @@ import javax.persistence.Entity;
 public class LiveWireAlertReleasedNotification extends LiveWireNotification {
     @Override
     public NotificationDetailedType getNotificationDetailedType() {
-        return NotificationDetailedType.LIVEWIRE_TO_REVIEW;
+        return NotificationDetailedType.LIVEWIRE_ALERT_RELEASED;
     }
 
     private LiveWireAlertReleasedNotification() {

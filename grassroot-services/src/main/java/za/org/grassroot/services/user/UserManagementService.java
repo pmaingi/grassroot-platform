@@ -1,42 +1,49 @@
 package za.org.grassroot.services.user;
 
 import za.org.grassroot.core.domain.User;
+import za.org.grassroot.core.domain.notification.EventNotification;
+import za.org.grassroot.core.domain.task.Event;
 import za.org.grassroot.core.dto.UserDTO;
-import za.org.grassroot.core.enums.AlertPreference;
-import za.org.grassroot.core.enums.UserMessagingPreference;
+import za.org.grassroot.core.enums.*;
 import za.org.grassroot.services.exception.NoSuchUserException;
 import za.org.grassroot.services.exception.UserExistsException;
 
 import java.util.List;
 import java.util.Locale;
+import java.util.Set;
 
-/**
- * @author Lesetse Kimwaga
- */
 public interface UserManagementService {
-
-    /*
-    Methods to load a specific user
-     */
 
     User load(String userUid);
 
-    User loadOrCreateUser(String inputNumber); // used only in USSD where there is no registration process
+    List<User> load(Set<String> userUids);
+
+    User loadOrCreateUser(String inputNumber, UserInterfaceType channel); // used only in USSD where there is no registration process
+
+    User loadOrCreate(String phoneOrEmail);
 
     User findByInputNumber(String inputNumber) throws NoSuchUserException;
 
+    User findByNumberOrEmail(String inputNumber, String emailAddress);
+
     User findByInputNumber(String inputNumber, String currentUssdMenu) throws NoSuchUserException;
 
-    User fetchUserByUsername(String username);
+    // if can't find by username itself, tries phone number or email
+    User findByUsernameLoose(String userName);
+
+    // only checks the username property alone
+    User fetchUserByUsernameStrict(String username);
 
     boolean userExist(String phoneNumber);
 
-    List<User> searchByGroupAndNameNumber(String groupUid, String nameOrNumber);
+    boolean emailTaken(String userUid, String email);
+
+    // username can be msisdn or pwd
+    boolean doesUserHaveStandardRole(String userName, String roleName);
 
     /*
     Methods to create a user, for various interfaces
      */
-
     String create(String phoneNumber, String displayName, String emailAddress);
 
     User createUserProfile(User userProfile);
@@ -55,32 +62,61 @@ public interface UserManagementService {
     Methods to update user properties
      */
 
-    void updateUser(String userUid, String displayName, String emailAddress, AlertPreference alertPreference, Locale locale);
+    // note: returns "false" if an OTP is needed to complete this but is not present,
+    // throws an invalid error if an OTP is provided but is not valid
+    // returns true otherwise
+    boolean updateUser(String userUid, String displayName, String phoneNumber,
+                       String emailAddress, Province province, AlertPreference alertPreference,
+                       Locale locale, String validationOtp,boolean whatsappOptIn, UserInterfaceType channel);
 
-    void updateDisplayName(String userUid, String displayName);
+    void updateDisplayName(String callingUserUid, String userToUpdateUid, String displayName);
 
     void setDisplayNameByOther(String updatingUserUid, String targetUserUid, String displayName);
 
-    void updateUserLanguage(String userUid, Locale locale);
+    void updateUserLanguage(String userUid, Locale locale, UserInterfaceType channel);
+
+    void updateUserProvince(String userUid, Province province);
 
     void updateAlertPreferences(String userUid, AlertPreference alertPreference);
 
-    void setMessagingPreference(String userUid, UserMessagingPreference preference);
+    void setMessagingPreference(String userUid, DeliveryRoute preference);
 
-    void setHasInitiatedUssdSession(String userUid);
+    void setHasInitiatedUssdSession(String userUid, boolean sendWelcomeMessage);
 
-    User resetUserPassword(String phoneNumber, String newPassword, String token);
+    void resetUserPassword(String username, String newPassword, String token);
 
-    void updateEmailAddress(String userUid, String emailAddress);
+    void updateEmailAddress(String callingUserUid, String userUid, String emailAddress);
+
+    void updatePhoneNumber(String callingUserUid, String userUid, String phoneNumber);
+
+    void updateHasImage(String userUid, boolean hasImage);
+
+    void updateContactError(String userUid, boolean hasContactError);
+
+    void deleteUser(String userUid, String validationOtp);
 
     /*
     Miscellaneous methods to query various properties about a user
      */
 
-    boolean needsToRenameSelf(User sessionUser);
+    boolean needsToSetName(User user, boolean evenOnCreation);
+
+    boolean needsToSetProvince(User user, boolean evenOnCreation);
+
+    boolean needToPromptForLanguage(User sessionUser, int minSessions);
+
+    boolean shouldSendLanguageText(User sessionUser);
 
     void sendAndroidLinkSms(String userUid);
 
     List<String[]> findOthersInGraph(User user, String nameFragment);
+
+    List<User> findRelatedUsers(User user, String nameFragment);
+
+    UserRegPossibility checkUserCanRegister(String phone, String email);
+
+    List<User> findUsersThatRsvpForEvent(Event event, EventRSVPResponse response);
+
+    List<User> findUsersNotifiedAboutEvent(Event event, Class<? extends EventNotification> notificationClass);
 
 }

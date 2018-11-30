@@ -1,5 +1,6 @@
 package za.org.grassroot.webapp.controller.android1;
 
+import lombok.extern.slf4j.Slf4j;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -10,12 +11,12 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.AccessDeniedException;
 import org.springframework.util.StringUtils;
 import org.springframework.web.bind.annotation.*;
-import za.org.grassroot.core.domain.Group;
-import za.org.grassroot.core.domain.Membership;
 import za.org.grassroot.core.domain.Permission;
 import za.org.grassroot.core.domain.User;
 import za.org.grassroot.core.domain.association.GroupJoinRequest;
 import za.org.grassroot.core.domain.geo.PreviousPeriodUserLocation;
+import za.org.grassroot.core.domain.group.Group;
+import za.org.grassroot.core.domain.group.Membership;
 import za.org.grassroot.services.ChangedSinceData;
 import za.org.grassroot.services.exception.JoinRequestNotOpenException;
 import za.org.grassroot.services.exception.RequestorAlreadyPartOfGroupException;
@@ -37,11 +38,11 @@ import java.util.stream.Collectors;
 /**
  * Created by luke on 2016/09/29.
  */
-@RestController
+@RestController @Slf4j
 @RequestMapping(value = "/api/group", produces = MediaType.APPLICATION_JSON_VALUE)
 public class GroupQueryRestController extends GroupAbstractRestController {
 
-    private static final Logger log = LoggerFactory.getLogger(GroupQueryRestController.class);
+    private static final int MAX_GROUPS_TO_SEND = 50;
 
     @Value("${grassroot.ussd.dialcode:'*134*1994*'}")
     private String ussdDialCode;
@@ -66,11 +67,12 @@ public class GroupQueryRestController extends GroupAbstractRestController {
         Instant changedSince = changedSinceMillis == null ? null : Instant.ofEpochMilli(changedSinceMillis);
         ChangedSinceData<Group> changedSinceData = groupQueryBroker.getActiveGroups(user, changedSince);
         List<GroupResponseWrapper> groupWrappers = changedSinceData.getAddedAndUpdated().stream()
+                .limit(MAX_GROUPS_TO_SEND)
                 .map(group -> createGroupWrapper(group, user))
                 .sorted(Collections.reverseOrder())
                 .collect(Collectors.toList());
 
-        log.info("responding ... group with removed UIDs = " + changedSinceData.getRemovedUids());
+        log.info("responding ... {} groups, with removed UIDs = {}", changedSinceData.getAddedAndUpdated().size(), changedSinceData.getRemovedUids());
 
         ChangedSinceData<GroupResponseWrapper> response = new ChangedSinceData<>(groupWrappers, changedSinceData.getRemovedUids());
         return new ResponseEntity<>(response, HttpStatus.OK);
@@ -112,11 +114,10 @@ public class GroupQueryRestController extends GroupAbstractRestController {
         permissionBroker.validateGroupPermission(user, group, Permission.GROUP_PERMISSION_SEE_MEMBER_DETAILS);
 
         List<MembershipResponseWrapper> members = new ArrayList<>();
-        // todo : watch this for n + 1 hibernate query performance ...
         group.getMemberships()
                 .forEach(m -> members.add(new MembershipResponseWrapper(group, m.getUser(), m.getRole(), false)));
 
-        log.info("From memberships : {}, created wrappers: {}", group.getMemberships(), members);
+        log.debug("From memberships : {}, created wrappers: {}", group.getMemberships(), members);
 
         return RestUtil.okayResponseWithData(RestMessage.GROUP_MEMBERS, members);
     }

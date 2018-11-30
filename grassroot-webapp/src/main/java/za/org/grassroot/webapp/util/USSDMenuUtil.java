@@ -1,5 +1,6 @@
 package za.org.grassroot.webapp.util;
 
+import lombok.extern.slf4j.Slf4j;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -20,13 +21,10 @@ import java.util.Map;
 /**
  * Created by luke on 2015/12/04.
  */
-@Component
+@Component @Slf4j
 public class USSDMenuUtil {
 
-    @Autowired
-    private Environment environment;
-
-    private static final Logger log = LoggerFactory.getLogger(USSDMenuUtil.class);
+    private final Environment environment;
 
     private String baseURI;
     private int maxOpeningMenuLength;
@@ -34,11 +32,16 @@ public class USSDMenuUtil {
 
     private static final int enumLength = ("1. ").length();
 
+    @Autowired
+    public USSDMenuUtil(Environment environment) {
+        this.environment = environment;
+    }
+
     @PostConstruct
     private void init() {
-        baseURI = environment.getRequiredProperty("grassroot.ussd.return.url", String.class);
-        maxOpeningMenuLength = environment.getRequiredProperty("grassroot.ussd.menu.length.opening", Integer.class);
-        maxMenuLength = environment.getRequiredProperty("grassroot.ussd.menu.length.standard", Integer.class);
+        baseURI = environment.getProperty("grassroot.ussd.return.url", "http://127.0.0.1:8080/ussd/");
+        maxOpeningMenuLength = environment.getProperty("grassroot.ussd.menu.length.opening", Integer.class, 140);
+        maxMenuLength = environment.getProperty("grassroot.ussd.menu.length.standard", Integer.class, 160);
         log.info("ussd menu util initialized, baseURI = {}, maxMenuOpen = {}, maxMenuLength = {}...", baseURI, maxOpeningMenuLength, maxMenuLength);
     }
 

@@ -11,19 +11,17 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.thymeleaf.TemplateEngine;
 import org.thymeleaf.context.Context;
-import za.org.grassroot.core.domain.Group;
+import za.org.grassroot.core.domain.group.Group;
 import za.org.grassroot.core.domain.livewire.LiveWireAlert;
 import za.org.grassroot.core.domain.task.Meeting;
+import za.org.grassroot.core.dto.GrassrootEmail;
 import za.org.grassroot.core.enums.DataSubscriberType;
 import za.org.grassroot.core.enums.LiveWireAlertType;
 import za.org.grassroot.core.repository.DataSubscriberRepository;
 import za.org.grassroot.core.repository.LiveWireAlertRepository;
 import za.org.grassroot.core.util.PhoneNumberUtil;
-import za.org.grassroot.integration.email.GrassrootEmail;
-import za.org.grassroot.integration.livewire.LiveWirePushBroker;
-import za.org.grassroot.integration.storage.StorageBroker;
+import za.org.grassroot.integration.messaging.MessagingServiceBroker;
 
-import java.io.File;
 import java.io.UnsupportedEncodingException;
 import java.net.URLEncoder;
 import java.time.format.DateTimeFormatter;
@@ -41,35 +39,39 @@ public class LiveWireSendingBrokerImpl implements LiveWireSendingBroker {
     @Value("${grassroot.livewire.public.path:http://localhost:8080/livewire/public/}")
     private String publicInfoPath;
 
+    @Value("${grassroot.livewire.from.address:livewire@grassroot.org.za}")
+    private String livewireEmailAddress;
+
     private static final DateTimeFormatter dateFormat = DateTimeFormatter.ofPattern("EEE, d MMMM yyyy");
     private static final DateTimeFormatter mtgFormat = DateTimeFormatter.ofPattern("dd MM, HH:mm");
 
     private final LiveWireAlertRepository alertRepository;
     private final DataSubscriberRepository subscriberRepository;
-    private final LiveWirePushBroker liveWirePushBroker;
 
+    private final MessagingServiceBroker messagingServiceBroker;
     private final MessageSourceAccessor messageSource;
-    private final TemplateEngine templateEngine;
-    private final StorageBroker storageBroker;
+
+    private TemplateEngine templateEngine;
 
     @Autowired
     public LiveWireSendingBrokerImpl(LiveWireAlertRepository alertRepository,
                                      DataSubscriberRepository subscriberRepository,
-                                     LiveWirePushBroker liveWirePushBroker,
-                                     @Qualifier("servicesMessageSourceAccessor") MessageSourceAccessor messageSource,
-                                     @Qualifier("emailTemplateEngine") TemplateEngine templateEngine,
-                                     StorageBroker storageBroker) {
+                                     MessagingServiceBroker messagingServiceBroker,
+                                     @Qualifier("servicesMessageSourceAccessor") MessageSourceAccessor messageSource) {
         this.alertRepository = alertRepository;
         this.subscriberRepository = subscriberRepository;
-        this.liveWirePushBroker = liveWirePushBroker;
+        this.messagingServiceBroker = messagingServiceBroker;
         this.messageSource = messageSource;
+    }
+
+    @Autowired(required = false)
+    public void setTemplateEngine(@Qualifier("emailTemplateEngine") TemplateEngine templateEngine) {
         this.templateEngine = templateEngine;
-        this.storageBroker = storageBroker;
     }
 
     // removed async as it was causing a seriously weird bug in here
     @Override
-    @Transactional(readOnly = true)
+    @Transactional
     public void sendLiveWireAlerts(Set<String> alertUids) {
         logger.info("starting to process {} alerts : ", alertUids.size());
         final List<String> publicPushMail = subscriberRepository.findAllActiveSubscriberPushEmails(DataSubscriberType.SYSTEM.name());
@@ -78,23 +80,40 @@ public class LiveWireSendingBrokerImpl implements LiveWireSendingBroker {
 
     private void sendAlert(LiveWireAlert alert, List<String> systemEmailAddresses) {
         logger.info("starting to send alert, uids: {}", alert.getPublicListsUids());
-        // send the alert (maybe add Twitter etc in future)
-        List<String> alertEmails = new ArrayList<>(systemEmailAddresses);
+
+        List<String> emailAddresses = new ArrayList<>(systemEmailAddresses);
+        emailAddresses.addAll(getAddressesForAlert(alert));
+
+        List<GrassrootEmail> emails = generateEmailsForAlert(alert, emailAddresses);
+        emails.forEach(messagingServiceBroker::sendEmail);
+        alert.setSent(true);
+
+        logger.info("LiveWire of type {} sent to {} emails! Headline : {}. Setting to sent ...",
+                alert.getDestinationType(), emails.size(), alert.getHeadline());
+    }
+
+    private List<String> getAddressesForAlert(LiveWireAlert alert) {
+        List<String> emailList = new ArrayList<>();
         switch (alert.getDestinationType()) {
             case SINGLE_LIST:
-                alertEmails.addAll(alert.getTargetSubscriber().getPushEmails());
+                if (alert.getTargetSubscriber() != null) {
+                    emailList.addAll(alert.getTargetSubscriber().getPushEmails());
+                }
                 break;
             case PUBLIC_LIST:
-                alertEmails.addAll(collectPublicEmailAddresses(alert));
+                emailList.addAll(collectPublicEmailAddresses(alert));
                 break;
             case SINGLE_AND_PUBLIC:
-                alertEmails.addAll(alert.getTargetSubscriber().getPushEmails());
-                alertEmails.addAll(collectPublicEmailAddresses(alert));
+                if (alert.getTargetSubscriber() != null) {
+                    emailList.addAll(alert.getTargetSubscriber().getPushEmails());
+                }
+                emailList.addAll(collectPublicEmailAddresses(alert));
+                break;
+            default:
+                logger.error("invalid livewire destination type used");
                 break;
         }
-        liveWirePushBroker.sendLiveWireEmails(alert.getUid(), generateEmailsForAlert(alert, alertEmails));
-        logger.info("LiveWire of type {} sent to {} emails! Headline : {}. Setting to sent ...",
-                alert.getDestinationType(), alertEmails.size(), alert.getHeadline());
+        return emailList;
     }
 
     private List<String> collectPublicEmailAddresses(LiveWireAlert alert) {
@@ -113,7 +132,42 @@ public class LiveWireSendingBrokerImpl implements LiveWireSendingBroker {
     }
 
     private List<GrassrootEmail> generateEmailsForAlert(LiveWireAlert alert, List<String> emailAddresses) {
-        String subject, template;
+        final Context ctx = new Context(Locale.ENGLISH);
+
+        String subjectKey;
+        String template;
+
+        Map<String, Object> emailVars = setBasicVariables(alert);
+
+        if (LiveWireAlertType.INSTANT.equals(alert.getType())) {
+            Group group = alert.getGroup();
+            subjectKey = "email.livewire.instant.subject";
+            template = "livewire_instant";
+            populateGroupVars(group, emailVars);
+        } else {
+            Meeting meeting = alert.getMeeting();
+            subjectKey = "email.livewire.meeting.subject";
+            template = "livewire_meeting";
+            emailVars.put("mtgLocation", meeting.getEventLocation());
+            emailVars.put("dateTime", mtgFormat.format(meeting.getEventDateTimeAtSAST()));
+            emailVars.put("mtgSubject", meeting.getName());
+            populateGroupVars(meeting.getAncestorGroup(), emailVars);
+        }
+
+        GrassrootEmail.EmailBuilder builder = new GrassrootEmail.EmailBuilder();
+
+        final String subjectLine = messageSource.getMessage(subjectKey, new String[] {alert.getHeadline()});
+        builder.fromAddress(livewireEmailAddress)
+                .fromName("Grassroot LiveWire")
+                .subject(subjectLine);
+
+        alert.getMediaFiles().forEach(record -> builder.attachmentByKey(record.getUid(), record.getFileName()));
+
+        return emailAddresses.stream()
+                .map(a -> finishAlert(ctx, builder, emailVars, template, a)).collect(Collectors.toList());
+    }
+
+    private Map<String, Object> setBasicVariables(LiveWireAlert alert) {
         Map<String, Object> emailVars = new HashedMap<>();
 
         emailVars.put("contactName", alert.getContactNameNullSafe());
@@ -124,45 +178,10 @@ public class LiveWireSendingBrokerImpl implements LiveWireSendingBroker {
         emailVars.put("headline", alert.getHeadline());
         emailVars.put("description", alert.getDescription());
 
-        logger.debug("formatted number: {}", emailVars.get("contactNumber"));
-
-        // todo : check both for location
-        if (LiveWireAlertType.INSTANT.equals(alert.getType())) {
-            Group group = alert.getGroup();
-            subject = "email.livewire.instant.subject";
-            template = "livewire_instant";
-            populateGroupVars(group, emailVars);
-        } else {
-            Meeting meeting = alert.getMeeting();
-            subject = "email.livewire.meeting.subject";
-            template = "livewire_meeting";
-            emailVars.put("mtgLocation", meeting.getEventLocation());
-            emailVars.put("dateTime", mtgFormat.format(meeting.getEventDateTimeAtSAST()));
-            emailVars.put("mtgSubject", meeting.getName());
-            populateGroupVars(meeting.getAncestorGroup(), emailVars);
-        }
-
-        GrassrootEmail.EmailBuilder builder = new GrassrootEmail.EmailBuilder()
-                .from("Grassroot LiveWire")
-                .subject(messageSource.getMessage(subject, new String[] {alert.getHeadline()}));
-
-        if (alert.getMediaFiles() != null && !alert.getMediaFiles().isEmpty()) {
-            // for the moment, we basically are just sending one as attachment (to change when gallery etc working)
-            logger.debug("trying to fetch the image ....");
-            File attachment = storageBroker.fetchFileFromRecord(alert.getMediaFiles().iterator().next());
-            logger.debug("fetched the image, adding it to email ...");
-            builder.attachment("image.jpg", attachment);
-        }
-
-        final Context ctx = new Context(Locale.ENGLISH);
-
-        return emailAddresses.stream()
-                .map(a -> finishAlert(ctx, builder, emailVars, template, a))
-                .collect(Collectors.toList());
+        return emailVars;
     }
 
-    private GrassrootEmail finishAlert(final Context ctx,
-                                       GrassrootEmail.EmailBuilder builder,
+    private GrassrootEmail finishAlert(Context ctx, GrassrootEmail.EmailBuilder builder,
                                        Map<String, Object> emailVars,
                                        String template,
                                        String emailAddress) {
@@ -177,10 +196,17 @@ public class LiveWireSendingBrokerImpl implements LiveWireSendingBroker {
         }
 
         ctx.setVariables(emailVars);
+        logger.info("About to generate mail, variables = {}", ctx.getVariableNames());
+
+        final String textContent = templateEngine.process("text/" + template, ctx);
+        final String htmlContent = templateEngine.process("html/" + template, ctx);
+
+        logger.info("Exiting email creation, html content = {}", htmlContent);
+
         return builder
-                .address(emailAddress)
-                .content(templateEngine.process("text/" + template, ctx))
-                .htmlContent(templateEngine.process("html/" + template, ctx))
+                .toAddress(emailAddress)
+                .content(textContent)
+                .htmlContent(htmlContent)
                 .build();
     }
 

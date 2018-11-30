@@ -3,8 +3,8 @@ package za.org.grassroot.webapp.model.rest;
 import com.fasterxml.jackson.annotation.JsonInclude;
 import com.google.common.collect.ImmutableMap;
 import org.springframework.context.support.MessageSourceAccessor;
-import za.org.grassroot.core.domain.Group;
 import za.org.grassroot.core.domain.Permission;
+import za.org.grassroot.core.domain.group.Group;
 
 import java.util.Locale;
 import java.util.Set;
@@ -22,7 +22,15 @@ public class PermissionDTO implements Comparable<PermissionDTO> {
 			.put(Permission.GROUP_PERMISSION_CREATE_LOGBOOK_ENTRY, 4)
 			.put(Permission.GROUP_PERMISSION_ADD_GROUP_MEMBER, 5)
 			.put(Permission.GROUP_PERMISSION_DELETE_GROUP_MEMBER, 6)
-			.put(Permission.GROUP_PERMISSION_UPDATE_GROUP_DETAILS, 7).build();
+			.put(Permission.GROUP_PERMISSION_UPDATE_GROUP_DETAILS, 7)
+			.put(Permission.GROUP_PERMISSION_CHANGE_PERMISSION_TEMPLATE, 8)
+			.put(Permission.GROUP_PERMISSION_CLOSE_OPEN_LOGBOOK, 9)
+			.put(Permission.GROUP_PERMISSION_VIEW_MEETING_RSVPS, 10)
+			.put(Permission.GROUP_PERMISSION_READ_UPCOMING_EVENTS, 11)
+			.put(Permission.GROUP_PERMISSION_SEND_BROADCAST, 12)
+			.put(Permission.GROUP_PERMISSION_CREATE_CAMPAIGN, 13)
+			.build();
+
 
 	private String groupUid;
 	private String forRole;
@@ -44,7 +52,7 @@ public class PermissionDTO implements Comparable<PermissionDTO> {
 		this.permissionLabel = messageSourceAccessor.getMessage("rest.permission." + permission.getName(), Locale.getDefault());
 		this.permissionDesc = messageSourceAccessor.getMessage("rest.permission.desc." + permission.getName(), Locale.getDefault());
 		this.permissionEnabled = enabledSet.contains(permission);
-		this.position = displayedPermissionsSorted.get(permission);
+		this.position = displayedPermissionsSorted.getOrDefault(permission, 99);
 	}
 
 	public String getGroupUid() {

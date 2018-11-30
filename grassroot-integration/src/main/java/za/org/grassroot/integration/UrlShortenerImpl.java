@@ -5,8 +5,11 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.http.converter.HttpMessageNotReadableException;
 import org.springframework.stereotype.Service;
+import org.springframework.web.client.RestClientException;
 import org.springframework.web.client.RestTemplate;
+import za.org.grassroot.core.domain.media.MediaFunction;
 
 import java.net.URISyntaxException;
 import java.util.Map;
@@ -19,7 +22,7 @@ public class UrlShortenerImpl implements UrlShortener {
 
     private static final Logger logger = LoggerFactory.getLogger(UrlShortenerImpl.class);
 
-    @Value("${grassroot.task.images.view.url:http://localhost:8080/image}")
+    @Value("${grassroot.images.view.url:http://localhost:8080/image}")
     private String imageViewUrl;
 
     @Value("${grassroot.shortener.images.host:https://s3.aws.com/")
@@ -37,9 +40,9 @@ public class UrlShortenerImpl implements UrlShortener {
     }
 
     @Override
-    public String shortenImageUrl(String bucket, String imageUrl) {
+    public String shortenImageUrl(MediaFunction mediaFunction, String imageKey) {
         try {
-            String longUrl = imageViewUrl + "/" + bucket + "/" + imageUrl;
+            String longUrl = imageViewUrl + "/" + mediaFunction + "/" + imageKey;
             logger.info("encoding image view URL: {}", longUrl);
             URIBuilder builder = new URIBuilder(shortenerApi)
                     .addParameter("access_token", shortenerKey)
@@ -49,6 +52,26 @@ public class UrlShortenerImpl implements UrlShortener {
             return (String) response.data.get("url");
         } catch (URISyntaxException e) {
             logger.error("Error shortening URL!", e);
+            return null;
+        }
+
+    }
+
+    @Override
+    public String shortenJoinUrls(String joinUrl) {
+        try {
+            long startTime = System.currentTimeMillis();
+            URIBuilder builder = new URIBuilder(shortenerApi)
+                    .addParameter("access_token", shortenerKey)
+                    .addParameter("longUrl", joinUrl);
+            BitlyResponse response = restTemplate.getForObject(builder.build(), BitlyResponse.class);
+            logger.info("URL shortened in {} msecs, response = {}", System.currentTimeMillis() - startTime, response);
+            return response != null ? (String) response.data.get("url") : null;
+        } catch (URISyntaxException|RestClientException e) {
+            logger.error("Error shortening URL!", e);
+            return null;
+        } catch (HttpMessageNotReadableException e) {
+            logger.error("Error interpreting response", e);
             return null;
         }
 

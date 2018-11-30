@@ -1,5 +1,6 @@
 package za.org.grassroot;
 
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.boot.autoconfigure.EnableAutoConfiguration;
 import org.springframework.boot.autoconfigure.domain.EntityScan;
 import org.springframework.context.annotation.Bean;
@@ -14,7 +15,7 @@ import org.springframework.scheduling.annotation.EnableScheduling;
 import org.springframework.scheduling.annotation.SchedulingConfigurer;
 import org.springframework.scheduling.config.ScheduledTaskRegistrar;
 import org.thymeleaf.TemplateEngine;
-import org.thymeleaf.spring4.SpringTemplateEngine;
+import org.thymeleaf.spring5.SpringTemplateEngine;
 import org.thymeleaf.templatemode.TemplateMode;
 import org.thymeleaf.templateresolver.ClassLoaderTemplateResolver;
 import org.thymeleaf.templateresolver.ITemplateResolver;
@@ -28,13 +29,10 @@ import java.util.concurrent.Executors;
  * @author Lesetse Kimwaga
  */
 
-@Configuration
+@Configuration @Slf4j
 @ComponentScan("za.org.grassroot")
 @EntityScan(basePackageClasses = {GrassrootServicesConfig.class, Jsr310JpaConverters.class})
-@EnableAutoConfiguration
-@EnableJpaRepositories
-@EnableAsync
-@EnableScheduling
+@EnableAutoConfiguration @EnableJpaRepositories @EnableAsync @EnableScheduling
 public class GrassrootServicesConfig implements SchedulingConfigurer {
 
 	/*
@@ -57,6 +55,7 @@ public class GrassrootServicesConfig implements SchedulingConfigurer {
 	public ResourceBundleMessageSource messageSource() {
 		ResourceBundleMessageSource source = new ResourceBundleMessageSource();
 		source.setBasename("notification-messages/messages");
+		source.setFallbackToSystemLocale(true);
 		return source;
 	}
 
@@ -72,11 +71,14 @@ public class GrassrootServicesConfig implements SchedulingConfigurer {
 
 	@Bean(name = "emailTemplateEngine")
 	public TemplateEngine emailTemplateEngine() {
+		log.info("Constructing email template engine");
 		final SpringTemplateEngine templateEngine = new SpringTemplateEngine();
 		templateEngine.addTemplateResolver(textTemplateResolver());
+		log.info("Added text template resolver");
 		templateEngine.addTemplateResolver(htmlTemplateResolver());
 		templateEngine.addTemplateResolver(stringTemplateResolver());
 		templateEngine.setTemplateEngineMessageSource(htmlEmailSource());
+		log.info("Email template engine constructed");
 		return templateEngine;
 	}
 

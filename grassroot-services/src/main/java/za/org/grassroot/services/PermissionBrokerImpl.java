@@ -1,13 +1,16 @@
 package za.org.grassroot.services;
 
-import com.codahale.metrics.annotation.Timed;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.security.access.AccessDeniedException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
-import za.org.grassroot.core.domain.*;
+import za.org.grassroot.core.domain.BaseRoles;
+import za.org.grassroot.core.domain.Permission;
+import za.org.grassroot.core.domain.Role;
+import za.org.grassroot.core.domain.User;
+import za.org.grassroot.core.domain.group.Group;
 import za.org.grassroot.core.repository.GroupRepository;
 import za.org.grassroot.core.repository.RoleRepository;
 import za.org.grassroot.services.group.GroupPermissionTemplate;
@@ -30,15 +33,15 @@ public class PermissionBrokerImpl implements PermissionBroker {
     private static final Set<Permission> defaultOrdinaryMemberPermissions =
             constructPermissionSet(Collections.emptySet(),
                     Permission.GROUP_PERMISSION_SEE_MEMBER_DETAILS,
-                    Permission.GROUP_PERMISSION_CREATE_GROUP_MEETING,
-                    Permission.GROUP_PERMISSION_CREATE_GROUP_VOTE,
                     Permission.GROUP_PERMISSION_READ_UPCOMING_EVENTS,
                     Permission.GROUP_PERMISSION_VIEW_MEETING_RSVPS,
-                    Permission.GROUP_PERMISSION_CREATE_LOGBOOK_ENTRY,
                     Permission.GROUP_PERMISSION_CLOSE_OPEN_LOGBOOK);
 
     private static final Set<Permission> defaultCommitteeMemberPermissions =
             constructPermissionSet(defaultOrdinaryMemberPermissions,
+                    Permission.GROUP_PERMISSION_CREATE_GROUP_MEETING,
+                    Permission.GROUP_PERMISSION_CREATE_GROUP_VOTE,
+                    Permission.GROUP_PERMISSION_CREATE_LOGBOOK_ENTRY,
                     Permission.GROUP_PERMISSION_ADD_GROUP_MEMBER,
                     Permission.GROUP_PERMISSION_FORCE_ADD_MEMBER,
                     Permission.GROUP_PERMISSION_CREATE_SUBGROUP,
@@ -56,7 +59,9 @@ public class PermissionBrokerImpl implements PermissionBroker {
                     Permission.GROUP_PERMISSION_DELINK_SUBGROUP,
                     Permission.GROUP_PERMISSION_FORCE_DELETE_MEMBER,
                     Permission.GROUP_PERMISSION_CHANGE_PERMISSION_TEMPLATE,
-                    Permission.GROUP_PERMISSION_FORCE_PERMISSION_CHANGE);
+                    Permission.GROUP_PERMISSION_FORCE_PERMISSION_CHANGE,
+                    Permission.GROUP_PERMISSION_SEND_BROADCAST,
+                    Permission.GROUP_PERMISSION_CREATE_CAMPAIGN);
 
     // closed group structure ... again, externalize
     private static final Set<Permission> closedOrdinaryMemberPermissions =
@@ -86,7 +91,9 @@ public class PermissionBrokerImpl implements PermissionBroker {
                     Permission.GROUP_PERMISSION_DELINK_SUBGROUP,
                     Permission.GROUP_PERMISSION_FORCE_DELETE_MEMBER,
                     Permission.GROUP_PERMISSION_CHANGE_PERMISSION_TEMPLATE,
-                    Permission.GROUP_PERMISSION_FORCE_PERMISSION_CHANGE);
+                    Permission.GROUP_PERMISSION_FORCE_PERMISSION_CHANGE,
+                    Permission.GROUP_PERMISSION_SEND_BROADCAST,
+                    Permission.GROUP_PERMISSION_CREATE_CAMPAIGN);
 
     // a couple of permissions that we don't let users remove from organizers (since then no one can change them)
     private static final Set<Permission> protectedOrganizerPermissions =
@@ -104,18 +111,14 @@ public class PermissionBrokerImpl implements PermissionBroker {
 
 
     private static Set<Permission> constructPermissionSet(Set<Permission> baseSet, Permission... permissions) {
-        Set<Permission> set = new HashSet<>();
-        set.addAll(baseSet);
+        Set<Permission> set = new HashSet<>(baseSet);
         Collections.addAll(set, permissions);
         return java.util.Collections.unmodifiableSet(set);
     }
 
     private Query fetchGroupsWithPermission(User user, Permission permission) {
-        return entityManager.createNativeQuery("select group_profile.*, greatest(latest_group_change, latest_event, latest_todo) as latest_activity from group_profile " +
+        return entityManager.createNativeQuery("select group_profile.*, greatest(last_task_creation_time, last_log_creation_time) as latest_activity from group_profile " +
                 "inner join group_user_membership as membership on (group_profile.id = membership.group_id and group_profile.active = true and membership.user_id = :user) " +
-                "left outer join (select group_id, max(created_date_time) as latest_group_change from group_log group by group_id) as group_log on (group_log.group_id = group_profile.id) " +
-                "left outer join (select parent_group_id, max(created_date_time) as latest_event from event group by parent_group_id) as event on (event.parent_group_id = group_profile.id) " +
-                "left outer join (select parent_group_id, max(created_date_time) as latest_todo from action_todo group by parent_group_id) as todo on (todo.parent_group_id = group_profile.id) " +
                 "where group_profile.active = true " +
                 "and :permission in (select permission from role_permissions where role_id = membership.role_id) " +
                 "order by latest_activity desc", Group.class)
@@ -179,6 +182,7 @@ public class PermissionBrokerImpl implements PermissionBroker {
         Objects.requireNonNull(user, "User cannot be null");
         Query resultQuery = requiredPermission == null ? fetchAllGroupsSortedForUser(user) : fetchGroupsWithPermission(user, requiredPermission);
         List<Group> activeGroups = resultQuery.getResultList();
+        log.info("Found {} active groups in query", activeGroups == null ? "none" : activeGroups.size());
         return activeGroups == null ? new HashSet<>() : new HashSet<>(activeGroups);
     }
 
@@ -186,11 +190,10 @@ public class PermissionBrokerImpl implements PermissionBroker {
     @Transactional(readOnly = true)
     @SuppressWarnings("unchecked")
     public List<Group> getPageOfGroups(User user, Permission requiredPermission, int pageNumber, int pageSize) {
-        Query resultQuery = requiredPermission == null ? fetchAllGroupsSortedForUser(user) : fetchGroupsWithPermission(user, requiredPermission);
-        return resultQuery
-                .setFirstResult((pageNumber) * pageSize)
-                .setMaxResults(pageSize)
-                .getResultList();
+        Query query = requiredPermission == null ? fetchAllGroupsSortedForUser(user) : fetchGroupsWithPermission(user, requiredPermission);
+        return query.setFirstResult((pageNumber) * pageSize)
+                    .setMaxResults(pageSize)
+                    .getResultList();
     }
 
     @Override
@@ -207,7 +210,6 @@ public class PermissionBrokerImpl implements PermissionBroker {
 
     @Override
     @Transactional(readOnly = true)
-    @Timed
     @SuppressWarnings("unchecked")
     public List<Group> getActiveGroupsSorted(User user, Permission requiredPermission) {
         Query resultQuery = requiredPermission == null ?
@@ -221,17 +223,28 @@ public class PermissionBrokerImpl implements PermissionBroker {
     }
 
     @Override
+    @Transactional(readOnly = true)
+    public boolean isSystemAdmin(User user) {
+        List<Role> systemRoles = roleRepository.findByNameAndRoleType(BaseRoles.ROLE_SYSTEM_ADMIN, Role.RoleType.STANDARD);
+        Set<Role> userRoles = user.getStandardRoles();
+        return userRoles.containsAll(systemRoles);
+    }
+
+    @Override
     public void validateSystemRole(User user, String roleName) {
         log.info("attempting to validate system role, with name: " + roleName);
         List<Role> systemRoles = roleRepository.findByNameAndRoleType(roleName, Role.RoleType.STANDARD);
+        log.info("system role for name: {}, found: {}", roleName, systemRoles);
         if (systemRoles == null || systemRoles.isEmpty()) {
             throw new UnsupportedOperationException("Error! Attempt to check invalid role");
         }
+        log.info("user system roles: {}", user.getStandardRoles());
         for (Role role : systemRoles) {
             if (!user.getStandardRoles().contains(role)) {
                 throw new AccessDeniedException("Error! User " + user.getDisplayName() + " does not have the role " + roleName);
             }
         }
+        log.info("user has requisite role, returning");
     }
 
     @Override

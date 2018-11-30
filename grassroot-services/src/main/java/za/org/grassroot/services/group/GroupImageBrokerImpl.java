@@ -2,13 +2,13 @@ package za.org.grassroot.services.group;
 
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.context.ApplicationEventPublisher;
-import org.springframework.data.jpa.domain.Specifications;
+import org.springframework.data.jpa.domain.Specification;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
-import za.org.grassroot.core.domain.Group;
-import za.org.grassroot.core.domain.GroupLog;
 import za.org.grassroot.core.domain.Permission;
 import za.org.grassroot.core.domain.User;
+import za.org.grassroot.core.domain.group.Group;
+import za.org.grassroot.core.domain.group.GroupLog;
 import za.org.grassroot.core.enums.GroupDefaultImage;
 import za.org.grassroot.core.enums.GroupLogType;
 import za.org.grassroot.core.repository.GroupRepository;
@@ -20,6 +20,7 @@ import za.org.grassroot.services.util.LogsAndNotificationsBroker;
 import za.org.grassroot.services.util.LogsAndNotificationsBundle;
 
 import java.util.Objects;
+import java.util.Optional;
 
 /**
  * Created by luke on 2016/09/26.
@@ -27,20 +28,20 @@ import java.util.Objects;
 @Service
 public class GroupImageBrokerImpl implements GroupImageBroker {
 
-    @Autowired
-    private UserRepository userRepository;
+    private final UserRepository userRepository;
+    private final GroupRepository groupRepository;
+    private final PermissionBroker permissionBroker;
+    private final ApplicationEventPublisher applicationEventPublisher;
+    private final LogsAndNotificationsBroker logsAndNotificationsBroker;
 
     @Autowired
-    private GroupRepository groupRepository;
-
-    @Autowired
-    private PermissionBroker permissionBroker;
-
-    @Autowired
-    private ApplicationEventPublisher applicationEventPublisher;
-
-    @Autowired
-    private LogsAndNotificationsBroker logsAndNotificationsBroker;
+    public GroupImageBrokerImpl(UserRepository userRepository, GroupRepository groupRepository, PermissionBroker permissionBroker, ApplicationEventPublisher applicationEventPublisher, LogsAndNotificationsBroker logsAndNotificationsBroker) {
+        this.userRepository = userRepository;
+        this.groupRepository = groupRepository;
+        this.permissionBroker = permissionBroker;
+        this.applicationEventPublisher = applicationEventPublisher;
+        this.logsAndNotificationsBroker = logsAndNotificationsBroker;
+    }
 
     @Override
     @Transactional
@@ -51,15 +52,19 @@ public class GroupImageBrokerImpl implements GroupImageBroker {
 
         User user = userRepository.findOneByUid(userUid);
         Group group = groupRepository.findOneByUid(groupUid);
+
+        permissionBroker.validateGroupPermission(user, group, Permission.GROUP_PERMISSION_UPDATE_GROUP_DETAILS);
+
         group.setImage(image);
         group.setImageUrl(imageUrl);
 
-        logAfterCommit(new GroupLog(group, user, GroupLogType.GROUP_AVATAR_UPLOADED, group.getId(), "Group avatar uploaded"));
+        logAfterCommit(new GroupLog(group, user, GroupLogType.GROUP_AVATAR_UPLOADED, null));
     }
 
     @Override
-    public Group getGroupByImageUrl(String imageUrl) {
-        return groupRepository.findOne(Specifications.where(GroupSpecifications.hasImageUrl(imageUrl)));
+    public Optional<Group> getGroupByUidOrImageUrl(String uidOrImageUrl) {
+        Group group = groupRepository.findOneByUid(uidOrImageUrl);
+        return group != null ? Optional.of(group) : groupRepository.findOne(Specification.where(GroupSpecifications.hasImageUrl(uidOrImageUrl)));
     }
 
     @Override
@@ -81,8 +86,7 @@ public class GroupImageBrokerImpl implements GroupImageBroker {
             group.setImageUrl(null);
         }
 
-        logAfterCommit(new GroupLog(group, user, GroupLogType.GROUP_DEFAULT_IMAGE_CHANGED,
-                group.getId(), defaultImage.toString()));
+        logAfterCommit(new GroupLog(group, user, GroupLogType.GROUP_DEFAULT_IMAGE_CHANGED, defaultImage.toString()));
     }
 
     private void logAfterCommit(GroupLog groupLog) {

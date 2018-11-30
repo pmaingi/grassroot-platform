@@ -3,7 +3,7 @@ package za.org.grassroot.core.domain.task;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import za.org.grassroot.core.domain.User;
-import za.org.grassroot.core.enums.MeetingImportance;
+import za.org.grassroot.core.enums.EventSpecialForm;
 
 import java.time.Instant;
 import java.util.Objects;
@@ -22,7 +22,7 @@ public class MeetingBuilder {
     private EventReminderType reminderType;
     private Integer customReminderMinutes = 0;
     private String description;
-    private MeetingImportance importance;
+    private EventSpecialForm importance;
 
     private Set<String> assignedMemberUids;
 
@@ -71,7 +71,7 @@ public class MeetingBuilder {
         return this;
     }
 
-    public MeetingBuilder setImportance(MeetingImportance importance) {
+    public MeetingBuilder setImportance(EventSpecialForm importance) {
         this.importance = importance;
         return this;
     }
@@ -90,11 +90,11 @@ public class MeetingBuilder {
         logger.debug("creating a meeting in builder, starting ... type = {}", reminderType);
         validateMeetingFields();
         Meeting mtg = new Meeting(name, startDateTime, user, parent, eventLocation);
-        mtg.setReminderType(reminderType == null ? EventReminderType.DISABLED : reminderType);
+        mtg.setReminderType(reminderType == null ? EventReminderType.GROUP_CONFIGURED : reminderType);
         mtg.setIncludeSubGroups(includeSubGroups);
         mtg.setCustomReminderMinutes(customReminderMinutes == null ? 0 : customReminderMinutes);
         mtg.setDescription(description);
-        mtg.setImportance(importance == null ? MeetingImportance.ORDINARY : importance);
+        mtg.setSpecialForm(importance == null ? EventSpecialForm.ORDINARY : importance);
         logger.debug("creating meeting from builder, reminder type = {}", reminderType);
         mtg.updateScheduledReminderTime();
 

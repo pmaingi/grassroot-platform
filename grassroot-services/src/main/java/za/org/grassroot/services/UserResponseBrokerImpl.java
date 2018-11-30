@@ -9,6 +9,8 @@ import za.org.grassroot.core.domain.SafetyEvent;
 import za.org.grassroot.core.domain.User;
 import za.org.grassroot.core.domain.task.Event;
 import za.org.grassroot.core.domain.task.Todo;
+import za.org.grassroot.core.domain.task.TodoType;
+import za.org.grassroot.core.domain.task.Vote;
 import za.org.grassroot.core.enums.EventRSVPResponse;
 import za.org.grassroot.core.enums.EventType;
 import za.org.grassroot.core.repository.GroupLogRepository;
@@ -58,15 +60,9 @@ public class UserResponseBrokerImpl implements UserResponseBroker {
             }
         }
 
-        // todo : consolidate next two
-        List<Event> votes = eventBroker.getOutstandingResponseForUser(user, EventType.VOTE);
-        if (votes != null && !votes.isEmpty()) {
-            return votes.get(0);
-        }
-
-        List<Event> meetings = eventBroker.getOutstandingResponseForUser(user, EventType.MEETING);
-        if (meetings != null && !meetings.isEmpty()) {
-            return meetings.get(0);
+        List<Event> events = eventBroker.getEventsNeedingResponseFromUser(user);
+        if (events != null && !events.isEmpty()) {
+            return events.get(0);
         }
 
         Todo todo = todoBroker.checkForTodoNeedingResponse(userUid);
@@ -91,16 +87,19 @@ public class UserResponseBrokerImpl implements UserResponseBroker {
         EventRSVPResponse responseType = EventRSVPResponse.fromString(response);
         boolean isYesNoResponse = responseType == EventRSVPResponse.YES || responseType == EventRSVPResponse.NO || responseType == EventRSVPResponse.MAYBE;
 
-        List<Event> outstandingVotes = eventBroker.getOutstandingResponseForUser(user, EventType.VOTE);
-        List<Event> outstandingYesNoVotes = outstandingVotes.stream()
+        List<Event> outstandingEvents = eventBroker.getEventsNeedingResponseFromUser(user);
+        List<Event> outstandingYesNoVotes = outstandingEvents.stream()
+                .filter(event -> EventType.VOTE.equals(event.getEventType()))
                 .filter(vote -> vote.getTags() == null || vote.getTags().length == 0)
                 .collect(Collectors.toList());
 
-        List<Event> outstandingOptionsVotes = outstandingVotes.stream()
+        List<Event> outstandingOptionsVotes = outstandingEvents.stream()
+                .filter(event -> EventType.VOTE.equals(event.getEventType()))
                 .filter(vote -> hasVoteOption(response, vote))
                 .collect(Collectors.toList());
 
-        List<Event> outstandingMeetings = eventBroker.getOutstandingResponseForUser(user, EventType.MEETING);
+        List<Event> outstandingMeetings = outstandingEvents.stream()
+                .filter(event -> EventType.MEETING.equals(event.getEventType())).collect(Collectors.toList());
 
         // add in check on response
         Todo outstandingTodo = todoBroker.checkForTodoNeedingResponse(userUid);
@@ -118,6 +117,24 @@ public class UserResponseBrokerImpl implements UserResponseBroker {
             return outstandingTodo;
         } else {// we have not found any meetings or votes that this could be response to
             return null;
+        }
+    }
+
+    // todo : handle with a bit more sophistication (e.g., look for 'yes it is done')
+    @Override
+    public boolean checkValidityOfResponse(EntityForUserResponse entity, String message) {
+        switch (entity.getJpaEntityType()) {
+            case MEETING:
+                return EventRSVPResponse.fromString(message) != EventRSVPResponse.INVALID_RESPONSE;
+            case VOTE:
+                Vote vote = (Vote) entity;
+                return !vote.getVoteOptions().isEmpty() ? vote.hasOption(message) :
+                        EventRSVPResponse.fromString(message) != EventRSVPResponse.INVALID_RESPONSE;
+            case TODO:
+                Todo todo = (Todo) entity;
+                return todo.getType().equals(TodoType.INFORMATION_REQUIRED);
+            default:
+                return false;
         }
     }
 

@@ -1,5 +1,7 @@
 package za.org.grassroot.services.task;
 
+import org.springframework.transaction.annotation.Transactional;
+import za.org.grassroot.core.domain.group.Membership;
 import za.org.grassroot.core.domain.task.Task;
 import za.org.grassroot.core.dto.task.TaskDTO;
 import za.org.grassroot.core.dto.task.TaskFullDTO;
@@ -23,6 +25,12 @@ public interface TaskBroker {
 
     TaskDTO load(String userUid, String taskUid, TaskType type);
 
+    <T extends Task> T loadEntity(String userUid, String taskUid, TaskType type, Class<T> returnType);
+
+    Map<String, String> loadResponses(String userUid, String taskUid, TaskType type);
+
+    String fetchUserResponse(String userUid, Task task);
+
     List<TaskDTO> fetchUpcomingIncompleteGroupTasks(String userUid, String groupUid);
 
     List<TaskDTO> fetchGroupTasksInPeriod(String userUid, String groupUid, Instant start, Instant end);
@@ -31,9 +39,17 @@ public interface TaskBroker {
 
     List<TaskDTO> fetchUpcomingUserTasks(String userUid);
 
+    /**
+     * TaskDTO is deprecated in favor of TaskFullDTO, so this is a replacement method for List<TaskDTO> fetchUpcomingUserTasks
+     * might be better to return List<Task> and transform to appropriate DTO in controller (if transaction mgmt allows)
+     */
+    List<TaskFullDTO> fetchUpcomingUserTasksFull(String userUid);
+
     ChangedSinceData<TaskDTO> fetchUpcomingTasksAndCancelled(String userUid, Instant changedSince);
 
-    List<TaskDTO> searchForTasks(String userUid, String searchTerm);
+    List<TaskFullDTO> searchForTasks(String userUid, String searchTerm);
+
+    TaskMinimalDTO fetchDescription(String userUid, String taskUid, TaskType type);
 
     /*
     Some new methods for new REST API
@@ -68,5 +84,22 @@ public interface TaskBroker {
     List<TaskFullDTO> fetchSpecifiedTasks(String userUid, Map<String, TaskType> taskUidsAndTypes, TaskSortType taskSortType);
 
     List<Task> fetchTasksRequiringUserResponse(String userUid, String userResponse);
+
+    List<Membership> fetchMembersAssignedToTask(String userUid, String taskUid, TaskType taskType, boolean onlyPositiveResponders);
+
+    // getting around Spring-Hibernate TX hell for some async methods
+    List<String> fetchUserUidsForTask(String userUid, String taskUid, TaskType taskType);
+
+    @Transactional(readOnly = true)
+    List<TaskFullDTO> fetchUpcomingGroupTasks(String userUid, String groupUid);
+
+    void cancelTask(String userUid, String taskUid, TaskType taskType, boolean notifyMembers, String attachedReason);
+
+    TaskFullDTO changeTaskDate(String userUid, String taskUid, TaskType taskType, Instant newDateTime);
+
+    void respondToTask(String userUid, String taskUid, TaskType taskType, String response);
+
+    // we use this to populate the graph (temporary convenience)
+    List<Task> loadAllTasks();
 
 }

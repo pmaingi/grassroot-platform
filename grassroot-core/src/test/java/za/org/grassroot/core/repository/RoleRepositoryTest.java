@@ -1,18 +1,20 @@
 package za.org.grassroot.core.repository;
 
+import lombok.extern.slf4j.Slf4j;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.test.autoconfigure.orm.jpa.DataJpaTest;
 import org.springframework.test.annotation.Rollback;
-import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.ContextConfiguration;
-import org.springframework.test.context.junit4.SpringJUnit4ClassRunner;
 import org.springframework.test.context.junit4.SpringRunner;
 import za.org.grassroot.TestContextConfiguration;
-import za.org.grassroot.core.GrassrootApplicationProfiles;
-import za.org.grassroot.core.domain.*;
+import za.org.grassroot.core.domain.BaseRoles;
+import za.org.grassroot.core.domain.Permission;
+import za.org.grassroot.core.domain.Role;
+import za.org.grassroot.core.domain.User;
+import za.org.grassroot.core.domain.group.Group;
 
-import javax.transaction.Transactional;
 import java.util.Set;
 
 import static org.hamcrest.CoreMatchers.is;
@@ -24,10 +26,8 @@ import static org.junit.Assert.assertThat;
  * @author Lesetse Kimwaga
  */
 
-@RunWith(SpringRunner.class)
+@Slf4j @RunWith(SpringRunner.class) @DataJpaTest
 @ContextConfiguration(classes = TestContextConfiguration.class)
-@Transactional
-@ActiveProfiles(GrassrootApplicationProfiles.INMEMORY)
 public class RoleRepositoryTest {
 
     @Autowired
@@ -115,7 +115,7 @@ public class RoleRepositoryTest {
     public void testSaveWithGroupReference() throws Exception {
         assertThat(roleRepository.count(), is(0L));
         String roleName = "ADD_MEMBER";
-        User user = userRepository.save(new User("0812223456"));
+        User user = userRepository.save(new User("0812223456", null, null));
         Group group = groupRepository.save(new Group("testGroup", user));
         Role role = roleRepository.save(new Role(roleName, group.getUid()));
         Role roleFromDb = roleRepository.findByNameAndGroupUid(roleName, group.getUid());
@@ -129,7 +129,7 @@ public class RoleRepositoryTest {
     @Rollback
     public void testGroupAssignment() throws Exception {
         assertThat(roleRepository.count(), is(0L));
-        User user = userRepository.save(new User("0801110000"));
+        User user = userRepository.save(new User("0801110000", null, null));
         Group group1 = groupRepository.save(new Group("gc1", user));
 
         Set<Role> group1roles = roleRepository.findByGroupUid(group1.getUid());
@@ -142,7 +142,7 @@ public class RoleRepositoryTest {
     public void testGroupAssignmentAfterConstruction() throws Exception {
         assertThat(roleRepository.count(), is(0L));
 
-        User user = userRepository.save(new User("0811110001"));
+        User user = userRepository.save(new User("0811110001", null, null));
         Group group = groupRepository.save(new Group("test Group", user));
 
         assertThat(roleRepository.count(), is(3L)); // check doesn't duplicate

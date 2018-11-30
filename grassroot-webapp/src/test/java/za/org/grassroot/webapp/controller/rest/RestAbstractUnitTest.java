@@ -6,8 +6,8 @@ import org.mockito.Mock;
 import org.mockito.runners.MockitoJUnitRunner;
 import org.springframework.test.context.ContextConfiguration;
 import org.springframework.test.web.servlet.MockMvc;
-import za.org.grassroot.core.domain.Group;
 import za.org.grassroot.core.domain.User;
+import za.org.grassroot.core.domain.group.Group;
 import za.org.grassroot.core.domain.task.*;
 import za.org.grassroot.core.repository.EventLogRepository;
 import za.org.grassroot.core.repository.GroupLogRepository;
@@ -16,7 +16,10 @@ import za.org.grassroot.services.PermissionBroker;
 import za.org.grassroot.services.group.GroupBroker;
 import za.org.grassroot.services.group.GroupJoinRequestService;
 import za.org.grassroot.services.group.GroupQueryBroker;
-import za.org.grassroot.services.task.*;
+import za.org.grassroot.services.task.EventBroker;
+import za.org.grassroot.services.task.EventLogBroker;
+import za.org.grassroot.services.task.TaskBroker;
+import za.org.grassroot.services.task.TodoBroker;
 import za.org.grassroot.services.user.GcmRegistrationBroker;
 import za.org.grassroot.services.user.UserManagementService;
 
@@ -39,7 +42,7 @@ public class RestAbstractUnitTest {
     protected final static String testEventDescription = "A feedback on code reviews.";
     protected final static Instant testInstant = Instant.now().plus(5, ChronoUnit.HOURS);
     protected final static LocalDateTime testDateTime = convertToUserTimeZone(testInstant, getSAST()).toLocalDateTime();
-    protected final static User sessionTestUser = new User(testUserPhone, "testUser");
+    protected final static User sessionTestUser = new User(testUserPhone, "testUser", null);
     protected final static Group testGroup = new Group(testGroupName, sessionTestUser);
 
     protected MockMvc mockMvc;
@@ -89,7 +92,7 @@ public class RestAbstractUnitTest {
     protected UserLogRepository userLogRepositoryMock;
 
 
-    Vote createVote(String[] options) {
+    protected Vote createVote(String[] options) {
         Vote voteEvent = new Vote(testEventTitle, testInstant, sessionTestUser, testGroup, true, testEventDescription);
         voteEvent.setTags(options);
         return voteEvent;

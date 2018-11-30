@@ -1,7 +1,7 @@
 package za.org.grassroot.core.domain.notification;
 
-import za.org.grassroot.core.domain.task.EventLog;
 import za.org.grassroot.core.domain.User;
+import za.org.grassroot.core.domain.task.EventLog;
 import za.org.grassroot.core.enums.AlertPreference;
 import za.org.grassroot.core.enums.NotificationDetailedType;
 
@@ -14,6 +14,11 @@ public class EventCancelledNotification extends EventNotification {
 	@Override
 	public NotificationDetailedType getNotificationDetailedType() {
 		return NotificationDetailedType.EVENT_CANCELLED;
+	}
+
+	@Override
+	public User getSender() {
+		return getEventLog().getUser();
 	}
 
 	private EventCancelledNotification() {

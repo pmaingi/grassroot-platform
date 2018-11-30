@@ -1,7 +1,10 @@
 package za.org.grassroot.webapp.model.http;
 
+import lombok.extern.slf4j.Slf4j;
+
 import javax.servlet.http.HttpServletRequest;
 
+@Slf4j
 public class AuthorizationHeader {
 
     private static String BEARER_TOKEN_WORD = "bearer";
@@ -18,10 +21,7 @@ public class AuthorizationHeader {
     }
 
     public boolean hasBearerToken() {
-        if (this.isNull()) {
-            return false;
-        }
-        return getHeader().toLowerCase().startsWith(BEARER_TOKEN_WORD);
+        return !this.isNull() && getHeader().toLowerCase().startsWith(BEARER_TOKEN_WORD);
     }
 
     public boolean doesNotHaveBearerToken() {

@@ -1,14 +1,17 @@
 package za.org.grassroot.core.domain.task;
 
-import za.org.grassroot.core.domain.Group;
+import org.apache.commons.lang3.StringUtils;
 import za.org.grassroot.core.domain.JpaEntityType;
 import za.org.grassroot.core.domain.User;
+import za.org.grassroot.core.domain.group.Group;
+import za.org.grassroot.core.enums.EventSpecialForm;
 import za.org.grassroot.core.enums.EventType;
-import za.org.grassroot.core.enums.MeetingImportance;
 import za.org.grassroot.core.enums.TaskType;
 import za.org.grassroot.core.util.UIDGenerator;
 
-import javax.persistence.*;
+import javax.persistence.Column;
+import javax.persistence.DiscriminatorValue;
+import javax.persistence.Entity;
 import java.time.Instant;
 import java.util.Objects;
 
@@ -18,10 +21,6 @@ public class Meeting extends Event<MeetingContainer> implements VoteContainer {
 
 	@Column(name = "location")
 	private String eventLocation;
-
-	@Column(name="importance")
-	@Enumerated(EnumType.STRING)
-	private MeetingImportance importance;
 
 	private Meeting() {
 		// for JPA
@@ -37,10 +36,10 @@ public class Meeting extends Event<MeetingContainer> implements VoteContainer {
 
 	// production constructor : above are only used in tests
 	private Meeting(String name, Instant startDateTime, User user, MeetingContainer parent, String eventLocation, boolean includeSubGroups,
-				   EventReminderType reminderType, int customReminderMinutes, String description, MeetingImportance importance) {
+				   EventReminderType reminderType, int customReminderMinutes, String description, EventSpecialForm importance) {
 		super(startDateTime, user, parent, name, includeSubGroups, reminderType, customReminderMinutes, description, true, false);
 		this.eventLocation = Objects.requireNonNull(eventLocation);
-		this.importance = importance == null ? MeetingImportance.ORDINARY : importance;
+		this.specialForm = importance == null ? EventSpecialForm.ORDINARY : importance;
 		setScheduledReminderActive(true);
 		setParent(parent);
 	}
@@ -72,18 +71,12 @@ public class Meeting extends Event<MeetingContainer> implements VoteContainer {
 	}
 
 	public void setEventLocation(String eventLocation) {
-		this.eventLocation = eventLocation;
+		this.eventLocation = StringUtils.truncate(eventLocation, 50);
 	}
-
-	public MeetingImportance getImportance() {
-		return importance;
-	}
-
-	public void setImportance(MeetingImportance importance) { this.importance = importance; }
 
 	@Override
 	public boolean isHighImportance() {
-		return MeetingImportance.SPECIAL.equals(importance);
+		return EventSpecialForm.IMPORTANT_MEETING.equals(specialForm);
 	}
 
 	public MeetingContainer getParent() {

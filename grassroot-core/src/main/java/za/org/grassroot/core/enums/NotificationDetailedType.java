@@ -6,6 +6,8 @@ package za.org.grassroot.core.enums;
 public enum NotificationDetailedType {
 
 	WELCOME,
+	LANGUAGES,
+	SYSTEM_INFO,
 
 	EVENT_INFO,
 	EVENT_CANCELLED,
@@ -16,10 +18,17 @@ public enum NotificationDetailedType {
 	VOTE_RESULTS,
 	EVENT_RESPONSE,
 
+	MEETING_CALLED,
+	VOTE_CALLED,
+
 	TODO_INFO,
 	TODO_REMINDER,
+	TODO_CANCELLED,
 
 	JOINREQUEST,
+
+	GROUP_BROADCAST,
+	CAMPAIGN_BROADCAST,
 	GROUP_WELCOME,
 
 	FREE_FORM_MESSAGE,
@@ -29,6 +38,9 @@ public enum NotificationDetailedType {
 	LIVEWIRE_MADE_CONTACT,
 	LIVEWIRE_ALERT_RELEASED,
 
-	SEND_JOIN_CODE
+	SEND_JOIN_CODE,
+
+	CAMPAIGN_SHARE,
+	CAMPAIGN_RESPONSE
 
 }

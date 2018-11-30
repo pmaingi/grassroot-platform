@@ -1,12 +1,21 @@
 package za.org.grassroot.core.domain;
 
-import org.hibernate.validator.constraints.Email;
+import lombok.Getter;
+import lombok.Setter;
+import org.apache.commons.validator.routines.EmailValidator;
+import org.hibernate.annotations.LazyCollection;
+import org.hibernate.annotations.LazyCollectionOption;
 import org.springframework.security.core.GrantedAuthority;
 import org.springframework.security.core.userdetails.UserDetails;
 import org.springframework.util.StringUtils;
 import za.org.grassroot.core.domain.account.Account;
+import za.org.grassroot.core.domain.campaign.CampaignLog;
+import za.org.grassroot.core.domain.group.Group;
+import za.org.grassroot.core.domain.group.Membership;
+import za.org.grassroot.core.domain.task.Event;
 import za.org.grassroot.core.enums.AlertPreference;
-import za.org.grassroot.core.enums.UserMessagingPreference;
+import za.org.grassroot.core.enums.DeliveryRoute;
+import za.org.grassroot.core.enums.Province;
 import za.org.grassroot.core.util.PhoneNumberUtil;
 import za.org.grassroot.core.util.UIDGenerator;
 
@@ -18,7 +27,7 @@ import java.util.stream.Collectors;
 import static za.org.grassroot.core.util.FormatUtil.removeUnwantedCharacters;
 import static za.org.grassroot.core.util.PhoneNumberUtil.invertPhoneNumber;
 
-@Entity
+@Entity @Getter
 @Table(name = "user_profile")  //table name needs to be quoted in SQL because 'user' is a reserved keyword
 public class User implements GrassrootEntity, UserDetails, Comparable<User> {
     private static final int DEFAULT_NOTIFICATION_PRIORITY = 1;
@@ -31,63 +40,71 @@ public class User implements GrassrootEntity, UserDetails, Comparable<User> {
     @Column(name = "uid", nullable = false, unique = true)
     private String uid;
 
-    @Column(name = "phone_number", nullable = false, length = 20, unique = true)
-    private String phoneNumber;
+    @Column(name = "phone_number", nullable = true, length = 20, unique = true)
+    @Setter private String phoneNumber;
 
-    @Email
-    @Column(name = "email_address")
+    @Column(name = "email_address", nullable = true, unique = true) // enforcing one user per email add.
     private String emailAddress;
 
     @Column(name = "first_name")
-    private String firstName;
+    @Setter private String firstName;
 
     @Column(name = "last_name")
-    private String lastName;
+    @Setter private String lastName;
 
     @Column(name = "display_name", nullable = true, length = 70) // allowing this to be nullable as might not be set
     private String displayName;
 
     @Column(name = "language_code", nullable = true, length = 10)
-    private String languageCode;
+    @Setter private String languageCode;
 
     @Column(name = "created_date_time", updatable = false, nullable = false)
-    private Instant createdDateTime;
+    @Getter private Instant createdDateTime;
 
     @Column(name = "user_name", length = 50, unique = true)
-    private String username;
+    @Setter private String username;
 
     @Column(name = "password")
-    private String password;
+    @Setter private String password;
 
     @Column(name = "notification_priority")
-    private Integer notificationPriority;
+    @Setter private Integer notificationPriority;
 
     @Column(name = "web")
-    private boolean hasWebProfile = false;
+    @Setter private boolean hasWebProfile = false;
 
     @Column(name = "android")
-    private boolean hasAndroidProfile = false;
+    @Getter @Setter private boolean hasAndroidProfile = false;
+
+    @Column(name = "whatsapp")
+    @Getter @Setter private boolean whatsAppOptedIn = false;
 
     @Enumerated(EnumType.STRING)
     @Column(name = "message_preference", nullable = false, length = 50)
-    private UserMessagingPreference messagingPreference;
+    @Getter @Setter private DeliveryRoute messagingPreference;
 
     @Enumerated(EnumType.STRING)
     @Column(name = "alert_preference", length = 50)
-    private AlertPreference alertPreference;
+    @Setter private AlertPreference alertPreference;
+
+    @Enumerated(EnumType.STRING)
+    @Column(name = "province", length = 50)
+    @Setter private Province province;
 
     @Column(name = "enabled")
-    private boolean enabled = true;
+    @Setter private boolean enabled = true;
 
+    // We use this to differentiate between users who have initiated a G/R session on their own, and those who have just
+    // been added via being part of another group -- to us in our stats, plus for some use cases (e.g., asking for language)
     @Column(name = "initiated_session")
-    private boolean hasInitiatedSession;
+    @Setter @Getter private boolean hasInitiatedSession;
 
     @Column(name = "has_set_name")
-    private boolean hasSetOwnName;
+    @Setter private boolean hasSetOwnName;
 
     @ManyToOne
     @JoinColumn(name = "safety_group_id")
-    private Group safetyGroup;
+    @Setter private Group safetyGroup;
 
     @Version
     private Integer version;
@@ -107,34 +124,63 @@ public class User implements GrassrootEntity, UserDetails, Comparable<User> {
     private Account primaryAccount;
 
     @Column(name = "free_trial_used")
-    private boolean hasUsedFreeTrial;
+    @Setter @Getter private boolean hasUsedFreeTrial;
 
     @Basic
     @Column(name = "livewire_contact")
-    private boolean liveWireContact;
+    @Setter @Getter private boolean liveWireContact;
+
+    // both of these could be done by looking up logs and image records, but this entity is already
+    // quite encumbered, and booleans are light, so trade-off runs in favour of denormalizing here
+    @Basic
+    @Column(name = "has_image")
+    @Getter @Setter private boolean hasImage;
+
+    @Basic
+    @Column(name = "contact_error")
+    @Getter @Setter private boolean contactError;
 
     // note: keep an eye on this in profiling, make sure it is super lazy (i.e., join table not hit at all), else drop on this side
     @ManyToMany(fetch = FetchType.LAZY, cascade = CascadeType.ALL, mappedBy = "administrators")
     private Set<Account> accountsAdministered = new HashSet<>();
 
+    @OneToMany(mappedBy = "user", fetch = FetchType.LAZY)
+    @LazyCollection(LazyCollectionOption.EXTRA)
+    private Set<CampaignLog> campaignLogs;
+
+    @ManyToMany(cascade = CascadeType.ALL, fetch = FetchType.LAZY, mappedBy = "assignedMembers")
+    private Set<Event> events = new HashSet<>();
+
     private User() {
         // for JPA
     }
 
-    public User(String phoneNumber) {
-        this(phoneNumber, null);
-    }
-
-    public User(String phoneNumber, String displayName) {
+    public User(String phoneNumber, String displayName, String emailAddress) {
+        if (StringUtils.isEmpty(phoneNumber) && StringUtils.isEmpty(emailAddress)) {
+            throw new IllegalArgumentException("Phone number and email address cannot both be null!");
+        }
+        if (!StringUtils.isEmpty(emailAddress) && !EmailValidator.getInstance().isValid(emailAddress)) {
+            throw new IllegalArgumentException("Email address, if provided, must be valid");
+        }
         this.uid = UIDGenerator.generateId();
-        this.phoneNumber = Objects.requireNonNull(phoneNumber);
-        this.username = phoneNumber;
+        // next two lines prevent duplicates being thrown on empty string
+        this.phoneNumber = StringUtils.isEmpty(phoneNumber) ? null : phoneNumber;
+        this.emailAddress = StringUtils.isEmpty(emailAddress) ? null : emailAddress;
+        this.username = StringUtils.isEmpty(phoneNumber) ? emailAddress : phoneNumber;
         this.displayName = removeUnwantedCharacters(displayName);
-        this.languageCode = "en";
-        this.messagingPreference = UserMessagingPreference.SMS; // as default
+//        this.languageCode = "en";
+        this.messagingPreference = !StringUtils.isEmpty(phoneNumber) ? DeliveryRoute.SMS : DeliveryRoute.EMAIL_GRASSROOT; // as default
         this.createdDateTime = Instant.now();
         this.alertPreference = AlertPreference.NOTIFY_NEW_AND_REMINDERS;
         this.hasUsedFreeTrial = false;
+    }
+
+    @PreUpdate
+    @PrePersist
+    public void updateTimeStamps() {
+        if (createdDateTime == null) {
+            createdDateTime = Instant.now();
+        }
     }
 
     /**
@@ -143,48 +189,12 @@ public class User implements GrassrootEntity, UserDetails, Comparable<User> {
      * @return user
      */
     public static User makeEmpty() {
-        return makeEmpty(UIDGenerator.generateId());
-    }
-
-    public static User makeEmpty(String uid) {
         User user = new User();
-        user.uid = uid;
+        user.uid = UIDGenerator.generateId();
         return user;
     }
 
-    public Long getId() {
-        return id;
-    }
-
-    public String getUid() {
-        return uid;
-    }
-
     public String getName() { return nameToDisplay(); }
-
-    public String getFirstName() {
-        return firstName;
-    }
-
-    public void setFirstName(String firstName) {
-        this.firstName = firstName;
-    }
-
-    public String getLastName() {
-        return lastName;
-    }
-
-    public void setLastName(String lastName) {
-        this.lastName = lastName;
-    }
-
-    public String getPhoneNumber() {
-        return phoneNumber;
-    }
-
-    public void setPhoneNumber(String phoneNumber) {
-        this.phoneNumber = phoneNumber;
-    }
 
     public String getNationalNumber() { return PhoneNumberUtil.formattedNumber(phoneNumber); }
 
@@ -196,40 +206,36 @@ public class User implements GrassrootEntity, UserDetails, Comparable<User> {
         this.displayName = removeUnwantedCharacters(displayName);
     }
 
-    public boolean isHasSetOwnName() { return hasSetOwnName; }
-
-    public void setHasSetOwnName(boolean hasSetOwnName) { this.hasSetOwnName = hasSetOwnName; }
-
-    public String getLanguageCode() {
-        return languageCode;
-    }
-
     public Locale getLocale() {
-        return (languageCode == null || languageCode.trim().isEmpty()) ? Locale.US: new Locale(languageCode);
+        return (languageCode == null || languageCode.trim().isEmpty()) ? Locale.ENGLISH : new Locale(languageCode);
     }
 
-    public void setLanguageCode(String languageCode) {
-        this.languageCode = languageCode;
-    }
-
-    public String getEmailAddress() {
-        return emailAddress;
+    public boolean hasLanguage() {
+        return !(languageCode == null || (languageCode.equals("en") && !hasInitiatedSession));
     }
 
     public void setEmailAddress(String emailAddress) {
         this.emailAddress = emailAddress;
     }
 
+    public boolean hasPhoneNumber() {
+        return !StringUtils.isEmpty(phoneNumber);
+    }
+
     public boolean hasEmailAddress() {
         return !StringUtils.isEmpty(emailAddress);
     }
 
-    public Instant getCreatedDateTime() {
-        return createdDateTime;
+    public boolean hasPassword() { return !StringUtils.isEmpty(password); }
+
+    public boolean isUsernameEmailAddress() {
+        // since we are guaranteed that no phone number will ever validate as an email
+        return EmailValidator.getInstance().isValid(username);
     }
 
-    public Account getPrimaryAccount() {
-        return primaryAccount;
+    public boolean areNotificationsByEmail() {
+        return DeliveryRoute.EMAIL_ROUTES.contains(this.messagingPreference) ||
+                StringUtils.isEmpty(this.phoneNumber);
     }
 
     public void setPrimaryAccount(Account primaryAccount) {
@@ -277,76 +283,8 @@ public class User implements GrassrootEntity, UserDetails, Comparable<User> {
         this.memberships.remove(membership);
     }
 
-    @PreUpdate
-    @PrePersist
-    public void updateTimeStamps() {
-        if (createdDateTime == null) {
-            createdDateTime = Instant.now();
-        }
-    }
-
-    public Group getSafetyGroup() {
-        return safetyGroup;
-    }
-
-    public void setSafetyGroup(Group safetyGroup) {
-        this.safetyGroup = safetyGroup;
-    }
-
-    public String getUsername() {
-        return username;
-    }
-
-    public void setUsername(String username) {
-        this.username = username;
-    }
-
-    public String getPassword() {
-        return password;
-    }
-
-    public void setPassword(String password) {
-        this.password = password;
-    }
-
-    public boolean isHasWebProfile() {
-        return hasWebProfile;
-    }
-
-    public boolean hasAndroidProfile() {
-        return hasAndroidProfile;
-    }
-
     public boolean hasSafetyGroup() {
         return safetyGroup != null;
-    }
-
-    public UserMessagingPreference getMessagingPreference() {
-        return messagingPreference;
-    }
-
-    public void setHasAndroidProfile(boolean hasAndroidProfile) {
-        this.hasAndroidProfile = hasAndroidProfile;
-    }
-
-    public void setHasWebProfile(boolean hasWebProfile) {
-        this.hasWebProfile = hasWebProfile;
-    }
-
-    public void setMessagingPreference(UserMessagingPreference messagingPreference) {
-        this.messagingPreference = messagingPreference;
-    }
-
-    public AlertPreference getAlertPreference() {
-        return alertPreference;
-    }
-
-    public void setAlertPreference(AlertPreference alertPreference) {
-        this.alertPreference = alertPreference;
-    }
-
-    public void setEnabled(boolean enabled) {
-        this.enabled = enabled;
     }
 
     public Set<Role> getStandardRoles() {
@@ -369,16 +307,8 @@ public class User implements GrassrootEntity, UserDetails, Comparable<User> {
         this.standardRoles.remove(role);
     }
 
-    /*
-    Whether the user can be contacted by LiveWire subscribers
-     */
-
-    public boolean isLiveWireContact() {
-        return liveWireContact;
-    }
-
-    public void setLiveWireContact(boolean liveWireContact) {
-        this.liveWireContact = liveWireContact;
+    public void removeAllStdRoles() {
+        this.standardRoles.clear();
     }
 
     /*
@@ -416,27 +346,6 @@ public class User implements GrassrootEntity, UserDetails, Comparable<User> {
 
     public boolean hasMultipleAccounts() {
         return accountsAdministered != null && accountsAdministered.size() > 1;
-    }
-
-    public boolean isHasUsedFreeTrial() {
-        return hasUsedFreeTrial;
-    }
-
-    public void setHasUsedFreeTrial(boolean hasUsedFreeTrial) {
-        this.hasUsedFreeTrial = hasUsedFreeTrial;
-    }
-
-    /*
-    We use this to differentiate between users who have initiated a G/R session on their own, and those who have just
-    been added via being part of another group -- to us in our stats, plus for some use cases (e.g., asking for language)
-     */
-
-    public boolean isHasInitiatedSession() {
-        return hasInitiatedSession;
-    }
-
-    public void setHasInitiatedSession(boolean hasInitiatedSession) {
-        this.hasInitiatedSession = hasInitiatedSession;
     }
 
     @Override
@@ -484,23 +393,11 @@ public class User implements GrassrootEntity, UserDetails, Comparable<User> {
         return this.enabled;
     }
 
-    public Integer getVersion() {
-        return version;
-    }
-
-    public void setVersion(Integer version) {
-        this.version = version;
-    }
-
     public int getNotificationPriority() {
         if (notificationPriority == null) {
             return DEFAULT_NOTIFICATION_PRIORITY;
         }
         return notificationPriority;
-    }
-
-    public void setNotificationPriority(Integer notificationPriority) {
-        this.notificationPriority = notificationPriority;
     }
 
     //~=================================================================================================================
@@ -513,13 +410,12 @@ public class User implements GrassrootEntity, UserDetails, Comparable<User> {
         if (displayName != null && displayName.trim().length() > 0) {
             return displayName;
         } else if (unknownPrefix.trim().length() == 0) {
-            return invertPhoneNumber(phoneNumber);
+            return !StringUtils.isEmpty(phoneNumber) ? invertPhoneNumber(phoneNumber) : emailAddress;
         } else {
             return unknownPrefix + " (" + invertPhoneNumber(phoneNumber) + ")";
         }
     }
 
-    // can't call this the more natural getName, or any variant, or Spring's getter handling throws a fit
     // refactoring to avoid confusion with property displayName -- point is this returns name, or phone number if no name
     public String nameToDisplay() {
         return getName("");

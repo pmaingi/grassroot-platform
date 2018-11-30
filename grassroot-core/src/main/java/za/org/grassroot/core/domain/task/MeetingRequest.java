@@ -1,7 +1,8 @@
 package za.org.grassroot.core.domain.task;
 
-import za.org.grassroot.core.domain.Group;
+import org.apache.commons.lang3.StringUtils;
 import za.org.grassroot.core.domain.User;
+import za.org.grassroot.core.domain.group.Group;
 import za.org.grassroot.core.enums.EventType;
 import za.org.grassroot.core.util.UIDGenerator;
 
@@ -62,7 +63,7 @@ public class MeetingRequest extends EventRequest<MeetingContainer> {
 	}
 
 	public void setEventLocation(String eventLocation) {
-		this.eventLocation = eventLocation;
+		this.eventLocation = StringUtils.truncate(eventLocation, 50);
 	}
 
 	public MeetingContainer getParent() {

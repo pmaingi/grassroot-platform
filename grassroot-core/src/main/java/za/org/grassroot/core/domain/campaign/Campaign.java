@@ -1,62 +1,60 @@
 package za.org.grassroot.core.domain.campaign;
 
+import lombok.Getter;
+import lombok.Setter;
+import lombok.extern.slf4j.Slf4j;
 import org.hibernate.annotations.Type;
-import za.org.grassroot.core.domain.Group;
+import org.springframework.util.StringUtils;
+import za.org.grassroot.core.domain.JpaEntityType;
 import za.org.grassroot.core.domain.TagHolder;
+import za.org.grassroot.core.domain.UidIdentifiable;
 import za.org.grassroot.core.domain.User;
+import za.org.grassroot.core.domain.account.Account;
+import za.org.grassroot.core.domain.group.Group;
+import za.org.grassroot.core.domain.media.MediaFileRecord;
+import za.org.grassroot.core.enums.CampaignLogType;
 import za.org.grassroot.core.util.UIDGenerator;
 
-import javax.persistence.CascadeType;
-import javax.persistence.Column;
-import javax.persistence.Entity;
-import javax.persistence.EnumType;
-import javax.persistence.Enumerated;
-import javax.persistence.GeneratedValue;
-import javax.persistence.GenerationType;
-import javax.persistence.Id;
-import javax.persistence.JoinColumn;
-import javax.persistence.ManyToOne;
-import javax.persistence.OneToMany;
-import javax.persistence.Table;
-import javax.persistence.Version;
-import java.io.Serializable;
+import javax.persistence.*;
 import java.time.Instant;
-import java.util.HashSet;
-import java.util.Objects;
-import java.util.Set;
+import java.util.*;
+import java.util.stream.Collectors;
 
-@Entity
+@Entity @Getter @Setter @Slf4j
 @Table(name = "campaign")
-public class Campaign implements Serializable, Comparable<Campaign>, TagHolder {
+public class Campaign implements UidIdentifiable, TagHolder {
+
+    public static final String JOIN_TOPIC_PREFIX = "JOIN_TOPIC:";
+    public static final String PUBLIC_JOIN_WORD_PREFIX = "PUBLIC_JOIN:";
 
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
-    @Column(name = "id", nullable = false)
+    @Column(name = "id", nullable = false, updatable = false)
     private Long id;
 
     @Version
     @Column(name = "version",nullable = false)
     private Integer version;
 
-    @Column(name = "uid", nullable = false, unique = true)
+    @Column(name = "uid", nullable = false, unique = true, updatable = false)
     private String uid;
 
     @Column(name = "name", nullable = false, length = 50)
-    private String campaignName;
+    private String name;
 
-    @Column(name = "code", nullable = false, length = 5)
+    @Column(name = "description") // allow arbitrary length
+    private String description;
+
+    @Column(name = "code", length = 5)
     private String campaignCode;
-
-    @Column(name = "description")
-    private String campaignDescription;
 
     @Column(name = "created_date_time", insertable = true, updatable = false)
     private Instant createdDateTime;
 
-    @Column(name = "start_date_time", insertable = true, updatable = false)
+    @Column(name = "start_date_time")
     private Instant startDateTime;
 
-    @Column(name = "end_date_time", insertable = true, updatable = false)
+    @Column(name = "end_date_time")
     private Instant endDateTime;
 
     @ManyToOne()
@@ -65,9 +63,13 @@ public class Campaign implements Serializable, Comparable<Campaign>, TagHolder {
 
     @ManyToOne
     @JoinColumn(name = "ancestor_group_id", nullable = true)
-    private Group masterGroup ;
+    private Group masterGroup;
 
-    @OneToMany(cascade = CascadeType.ALL, mappedBy = "campaign", orphanRemoval = true)
+    @ManyToOne(fetch = FetchType.EAGER)
+    @JoinColumn(name = "account_id", nullable = false)
+    private Account account;
+
+    @OneToMany(cascade = CascadeType.ALL, mappedBy = "campaign")
     private Set<CampaignMessage> campaignMessages = new HashSet<>();
 
     @Column(name = "tags")
@@ -78,33 +80,160 @@ public class Campaign implements Serializable, Comparable<Campaign>, TagHolder {
     @Column(name = "type",nullable = false)
     private CampaignType campaignType;
 
-    @Column(name = "url",nullable = true)
-    private String url;
+    @Column(name = "landing_url",nullable = true)
+    private String landingUrl;
+
+    @Column(name = "petition_api")
+    private String petitionApi;
+
+    @Column(name = "petition_result_api")
+    private String petitionResultApi;
 
     @OneToMany(mappedBy = "campaign")
     private Set<CampaignLog> campaignLogs = new HashSet<>();
 
-    public Campaign(){
+    @Column(name = "sharing_enabled")
+    private boolean outboundTextEnabled = false;
+
+    @Column(name = "sharing_budget")
+    private long outboundBudget; // in cents
+
+    @Column(name = "sharing_spent")
+    private long outboundSpent; // in cents, also can be calculated from notification count, but double checking (also as price per may alter)
+
+    @ManyToOne
+    @JoinColumn(name = "image_record_uid", referencedColumnName = "uid")
+    private MediaFileRecord campaignImage;
+
+    @Column(name = "default_language")
+    private Locale defaultLanguage;
+
+    public Campaign() {
         this.uid = UIDGenerator.generateId();
         this.createdDateTime = Instant.now();
     }
 
-    public Campaign(String campaignName, String campaignCode,String campaignDescription, User createdByUser, Instant startDateTime, Instant endDateTime,CampaignType campaignType, String campaignUrl){
+    public Campaign(String campaignName, String campaignCode, String campaignDescription, User createdByUser, Instant startDateTime, Instant endDateTime, CampaignType campaignType, String campaignUrl,
+                    Account account){
         this.uid = UIDGenerator.generateId();
         this.createdDateTime = Instant.now();
-        this.campaignName = Objects.requireNonNull(campaignName);
+        this.account = Objects.requireNonNull(account);
+        this.name = Objects.requireNonNull(campaignName);
         this.campaignCode = Objects.requireNonNull(campaignCode);
         this.createdByUser = Objects.requireNonNull(createdByUser);
-        this.campaignDescription = Objects.requireNonNull(campaignDescription);
+        this.description = Objects.requireNonNull(campaignDescription);
         this.startDateTime = Objects.requireNonNull(startDateTime);
         this.endDateTime = Objects.requireNonNull(endDateTime);
         this.campaignType = Objects.requireNonNull(campaignType);
-        this.url = campaignUrl;
+        this.landingUrl = campaignUrl;
+        this.outboundTextEnabled = false;
+        this.outboundBudget = 0L;
+        this.outboundSpent = 0L;
+        log.info("is the account null? {}", this.account == null);
+    }
+
+    public boolean isActive() {
+        return Instant.now().isBefore(endDateTime);
+    }
+
+    public boolean isActiveWithUrl() {
+        return isActive() && !StringUtils.isEmpty(landingUrl);
+    }
+
+    public void addToOutboundSpent(long amount) {
+        this.outboundSpent += amount;
+    }
+
+    public long outboundBudgetLeft() {
+        return Math.max(this.outboundBudget - this.outboundSpent, 0);
     }
 
     @Override
-    public String[]getTags(){
+    public String[] getTags(){
         return tags;
+    }
+
+    @Override
+    public void setTags(String[] tags) {
+        this.tags = tags;
+    }
+
+    public List<String> getJoinTopics() {
+        return this.getTagList().stream().filter(s -> s.startsWith(JOIN_TOPIC_PREFIX))
+                .map(s -> s.substring(JOIN_TOPIC_PREFIX.length())).collect(Collectors.toList());
+    }
+
+    public void setJoinTopics(List<String> joinTopics) {
+        // first get all the non-affiliation tags
+        List<String> tags = getTagList().stream()
+                .filter(s -> !s.startsWith(JOIN_TOPIC_PREFIX)).collect(Collectors.toList());
+        // then add the topics
+        tags.addAll(joinTopics.stream().map(s -> JOIN_TOPIC_PREFIX + s).collect(Collectors.toSet()));
+        setTags(tags);
+    }
+
+    public void setPublicJoinWord(String publicJoinWord) {
+        List<String> tags = getTagList().stream()
+                .filter(s -> !s.startsWith(PUBLIC_JOIN_WORD_PREFIX)).collect(Collectors.toList());
+        // then add the topics
+        if (!StringUtils.isEmpty(publicJoinWord)) {
+            tags.add(PUBLIC_JOIN_WORD_PREFIX + publicJoinWord);
+        }
+        setTags(tags);
+    }
+
+    public String getPublicJoinWord() {
+        return this.getTagList().stream().filter(s -> s.startsWith(PUBLIC_JOIN_WORD_PREFIX))
+                .findFirst()
+                .map(s -> s.substring(PUBLIC_JOIN_WORD_PREFIX.length()))
+                .orElse(null);
+    }
+
+    public long countUsersInLogs(CampaignLogType logType) {
+        return getCampaignLogs().stream()
+                .filter(log -> logType.equals(log.getCampaignLogType()))
+                .map(log -> log.getUser().getId())
+                .distinct()
+                .count();
+    }
+
+    // this is possibly nasty, but we cache campaigns, so keep an eye out but should be fine
+    public long getLastActivityTimeEpochMillis() {
+        return getCampaignLogs().stream()
+                .map(CampaignLog::getCreationTime)
+                .mapToLong(Instant::toEpochMilli)
+                .max().orElse(this.createdDateTime.toEpochMilli());
+    }
+
+    public void addCampaignMessages(Set<CampaignMessage> messages) {
+        if (this.campaignMessages == null) {
+            this.campaignMessages = new HashSet<>();
+        }
+        this.campaignMessages.addAll(messages);
+    }
+
+    public Locale getDefaultLanguage() {
+        return defaultLanguage == null ? Locale.ENGLISH : defaultLanguage;
+    }
+
+    @Override
+    public JpaEntityType getJpaEntityType() {
+        return JpaEntityType.CAMPAIGN;
+    }
+
+    @Override
+    public boolean hasName() {
+        return true;
+    }
+
+    @Override
+    public Set<User> getMembers() {
+        return null; // could get engaged users, but can't see a use of this at present, so leave
+    }
+
+    @Override
+    public Group getThisOrAncestorGroup() {
+        return masterGroup;
     }
 
     @Override
@@ -115,11 +244,8 @@ public class Campaign implements Serializable, Comparable<Campaign>, TagHolder {
         if (o == null || !(o instanceof Campaign)) {
             return false;
         }
-
         Campaign campaign = (Campaign) o;
-
         return (getUid() != null) ? getUid().equals(campaign.getUid()) : campaign.getUid() == null;
-
     }
 
     @Override
@@ -128,21 +254,12 @@ public class Campaign implements Serializable, Comparable<Campaign>, TagHolder {
     }
 
     @Override
-    public int compareTo(Campaign campaign) {
-        if (uid.equals(campaign.getUid())) {
-            return 0;
-        } else {
-            Instant otherCreatedDateTime = campaign.getCreatedDateTime();
-            return createdDateTime.compareTo(otherCreatedDateTime);
-        }
-    }
-
-    @Override
     public String toString() {
         final StringBuilder sb = new StringBuilder("Campaign{");
         sb.append("id=").append(id);
         sb.append(", uid='").append(uid).append('\'');
-        sb.append(", campaignName='").append(campaignName).append('\'');
+        sb.append(", name='").append(name).append('\'');
+        sb.append(", account='").append(account.getName()).append('\'');
         sb.append(", campaignCode='").append(campaignCode).append('\'');
         sb.append(", createdDateTime=").append(createdDateTime);
         sb.append(", createdBy=").append(createdByUser.getId());
@@ -150,134 +267,8 @@ public class Campaign implements Serializable, Comparable<Campaign>, TagHolder {
         sb.append(", campaignEndDate=").append(endDateTime);
         sb.append(", campaignType=").append(campaignType);
         sb.append(", version=").append(version);
+        sb.append(", language=").append(defaultLanguage);
         sb.append('}');
         return sb.toString();
-    }
-
-
-    public Long getId() {
-        return id;
-    }
-
-    public void setId(Long id) {
-        this.id = id;
-    }
-
-    public String getUid() {
-        return uid;
-    }
-
-    public void setUid(String uid) {
-        this.uid = uid;
-    }
-
-    public String getCampaignName() {
-        return campaignName;
-    }
-
-    public void setCampaignName(String campaignName) {
-        this.campaignName = campaignName;
-    }
-
-    public String getCampaignCode() {
-        return campaignCode;
-    }
-
-    public void setCampaignCode(String campaignCode) {
-        this.campaignCode = campaignCode;
-    }
-
-    public Instant getCreatedDateTime() {
-        return createdDateTime;
-    }
-
-    public void setCreatedDateTime(Instant createdDateTime) {
-        this.createdDateTime = createdDateTime;
-    }
-
-    public Instant getStartDateTime() {
-        return startDateTime;
-    }
-
-    public void setStartDateTime(Instant startDateTime) {
-        this.startDateTime = startDateTime;
-    }
-
-    public Instant getEndDateTime() {
-        return endDateTime;
-    }
-
-    public void setEndDateTime(Instant endDateTime) {
-        this.endDateTime = endDateTime;
-    }
-
-    public User getCreatedByUser() {
-        return createdByUser;
-    }
-
-    public void setCreatedByUser(User createdByUser) {
-        this.createdByUser = createdByUser;
-    }
-
-    @Override
-    public void setTags(String[] tags) {
-        this.tags = tags;
-    }
-
-
-    public void setCampaignMessages(Set<CampaignMessage> campaignMessages) {
-        this.campaignMessages = campaignMessages;
-    }
-
-    public Integer getVersion() {
-        return version;
-    }
-
-    public void setVersion(Integer version) {
-        this.version = version;
-    }
-
-    public String getCampaignDescription() {
-        return campaignDescription;
-    }
-
-    public void setCampaignDescription(String campaignDescription) {
-        this.campaignDescription = campaignDescription;
-    }
-
-    public Group getMasterGroup() {
-        return masterGroup;
-    }
-
-    public void setMasterGroup(Group masterGroup) {
-        this.masterGroup = masterGroup;
-    }
-
-    public CampaignType getCampaignType() {
-        return campaignType;
-    }
-
-    public void setCampaignType(CampaignType campaignType) {
-        this.campaignType = campaignType;
-    }
-
-    public String getUrl() {
-        return url;
-    }
-
-    public void setUrl(String url) {
-        this.url = url;
-    }
-
-    public Set<CampaignMessage> getCampaignMessages() {
-        return campaignMessages;
-    }
-
-    public Set<CampaignLog> getCampaignLogs() {
-        return campaignLogs;
-    }
-
-    public void setCampaignLogs(Set<CampaignLog> campaignLogs) {
-        this.campaignLogs = campaignLogs;
     }
 }

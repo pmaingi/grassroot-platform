@@ -3,23 +3,17 @@ package za.org.grassroot.core.repository;
 import org.junit.Before;
 import org.junit.Test;
 import org.junit.runner.RunWith;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.test.autoconfigure.orm.jpa.DataJpaTest;
 import org.springframework.test.annotation.Rollback;
-import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.ContextConfiguration;
 import org.springframework.test.context.junit4.SpringRunner;
 import za.org.grassroot.TestContextConfiguration;
-import za.org.grassroot.core.GrassrootApplicationProfiles;
-import za.org.grassroot.core.domain.account.Account;
-import za.org.grassroot.core.domain.Group;
-import za.org.grassroot.core.domain.account.PaidGroup;
 import za.org.grassroot.core.domain.User;
-import za.org.grassroot.core.enums.AccountBillingCycle;
+import za.org.grassroot.core.domain.account.Account;
+import za.org.grassroot.core.domain.group.Group;
 import za.org.grassroot.core.enums.AccountType;
 
-import javax.transaction.Transactional;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
 import java.util.List;
@@ -32,13 +26,9 @@ import static org.junit.Assert.*;
 /**
  * Created by luke on 2015/11/14.
  */
-@RunWith(SpringRunner.class)
+@RunWith(SpringRunner.class) @DataJpaTest
 @ContextConfiguration(classes = TestContextConfiguration.class)
-@Transactional
-@ActiveProfiles(GrassrootApplicationProfiles.INMEMORY)
 public class AccountRepositoryTest {
-
-    private static final Logger log = LoggerFactory.getLogger(AccountRepositoryTest.class);
 
     private static final String accountName = "Paying institution";
     private static final String billingEmail = "accounts@institution.com";
@@ -52,14 +42,11 @@ public class AccountRepositoryTest {
     @Autowired
     private GroupRepository groupRepository;
 
-    @Autowired
-    private PaidGroupRepository paidGroupRepository;
-
     private User testUser;
 
     @Before
-    public void setUp() throws Exception {
-        testUser = userRepository.save(new User("0601112345"));
+    public void setUp() {
+        testUser = userRepository.save(new User("0601112345", null, null));
     }
 
     @Test
@@ -68,7 +55,7 @@ public class AccountRepositoryTest {
 
         assertThat(accountRepository.count(), is(0L));
 
-        Account account = new Account(testUser, "accountname", AccountType.STANDARD, testUser, null, AccountBillingCycle.MONTHLY);
+        Account account = new Account(testUser, "accountname", AccountType.STANDARD, testUser);
         account = accountRepository.save(account);
         assertNotEquals(null, account.getId());
 
@@ -79,7 +66,7 @@ public class AccountRepositoryTest {
     public void shouldCreateAndSaveAccount() {
         assertThat(accountRepository.count(), is(0L));
 
-        Account account = new Account(testUser, accountName, AccountType.STANDARD, testUser, null, AccountBillingCycle.MONTHLY);
+        Account account = new Account(testUser, accountName, AccountType.STANDARD, testUser);
         accountRepository.save(account);
 
         assertThat(accountRepository.count(), is(1L));
@@ -96,9 +83,9 @@ public class AccountRepositoryTest {
     @Test
     public void shouldHandleAccountAdmins() {
         assertThat(accountRepository.count(), is (0L));
-        User testUser2 = userRepository.save(new User("0701112345"));
+        User testUser2 = userRepository.save(new User("0701112345", null, null));
 
-        Account account = accountRepository.save(new Account(testUser, accountName, AccountType.STANDARD, testUser, null, AccountBillingCycle.MONTHLY));
+        Account account = accountRepository.save(new Account(testUser, accountName, AccountType.STANDARD, testUser));
         testUser.setPrimaryAccount(account);
         testUser = userRepository.save(testUser);
 
@@ -108,7 +95,7 @@ public class AccountRepositoryTest {
         assertFalse(testUser2.getAccountsAdministered().contains(account));
         assertFalse(account.getAdministrators().contains(testUser2));
 
-        Account account2 = accountRepository.save(new Account(testUser2, accountName + "2", AccountType.HEAVY, testUser2, null, AccountBillingCycle.ANNUAL));
+        Account account2 = accountRepository.save(new Account(testUser2, accountName + "2", AccountType.HEAVY, testUser2));
         testUser2.setPrimaryAccount(account2);
         testUser2 = userRepository.save(testUser2);
 
@@ -136,22 +123,21 @@ public class AccountRepositoryTest {
     public void shouldSetBillingAddress() {
         assertThat(accountRepository.count(), is(0L));
 
-        Account account = new Account(testUser, accountName, AccountType.STANDARD, testUser, null, AccountBillingCycle.MONTHLY);
+        Account account = new Account(testUser, accountName, AccountType.STANDARD, testUser);
         accountRepository.save(account);
 
         assertThat(accountRepository.count(), is(1L));
 
         Account accountFromDb = accountRepository.findAll().iterator().next();
 
-        // todo : test with a different user
         testUser.setEmailAddress(billingEmail);
-        account.setBillingUser(testUser);
+        account.setPrimaryBillingEmail(billingEmail);
         accountFromDb = accountRepository.save(accountFromDb);
 
         assertNotNull(accountFromDb.getId());
         assertNotNull(accountFromDb.getCreatedDateTime());
         assertThat(accountFromDb.getAccountName(), is(accountName));
-        assertThat(accountFromDb.getBillingUser().getEmailAddress(), is(billingEmail));
+        assertThat(accountFromDb.getPrimaryBillingEmail(), is(billingEmail));
 
     }
 
@@ -159,7 +145,7 @@ public class AccountRepositoryTest {
     @Rollback
     public void shouldFindByAccountName() {
         assertThat(accountRepository.count(), is(0L));
-        Account account = new Account(testUser, accountName, AccountType.STANDARD, testUser, null, AccountBillingCycle.MONTHLY);
+        Account account = new Account(testUser, accountName, AccountType.STANDARD, testUser);
         account = accountRepository.save(account);
         List<Account> accountList = accountRepository.findByAccountName(accountName);
         assertEquals(accountList.size(), 1);
@@ -173,16 +159,17 @@ public class AccountRepositoryTest {
     public void shouldFindByBillingUser() {
 
         assertThat(accountRepository.count(), is(0L));
-        User billingUser = userRepository.save(new User("0601110000", "Paying the bill"));
+        User billingUser = userRepository.save(new User("0601110000", "Paying the bill", null));
         billingUser.setEmailAddress(billingEmail);
-        Account account = new Account(testUser, accountName, AccountType.STANDARD, billingUser, null, AccountBillingCycle.MONTHLY);
+        Account account = new Account(testUser, accountName, AccountType.STANDARD, billingUser);
+        account.setPrimaryBillingEmail(billingEmail);
         accountRepository.save(account);
         List<Account> accountList = accountRepository.findByAccountName(accountName);
         assertEquals(accountList.size(), 1);
         Account accountFromDb = accountList.get(0);
         assertNotNull(accountFromDb);
         assertEquals(accountName, accountFromDb.getAccountName());
-        assertEquals(billingEmail, accountFromDb.getBillingUser().getEmailAddress());
+        assertEquals(billingEmail, accountFromDb.getPrimaryBillingEmail());
 
     }
 
@@ -190,7 +177,7 @@ public class AccountRepositoryTest {
     @Rollback
     public void shouldDisable() {
         assertThat(accountRepository.count(), is(0L));
-        Account account = new Account(testUser, accountName, AccountType.STANDARD, testUser, null, AccountBillingCycle.MONTHLY);
+        Account account = new Account(testUser, accountName, AccountType.STANDARD, testUser);
         accountRepository.save(account);
         Account accountFromDb = accountRepository.findByAccountName(accountName).get(0);
         accountFromDb.setDisabledDateTime(Instant.now());
@@ -206,8 +193,8 @@ public class AccountRepositoryTest {
 
         assertThat(accountRepository.count(), is(0L));
 
-        Account accountEnabled = new Account(testUser, accountName + "_enabled", AccountType.STANDARD, testUser, null, AccountBillingCycle.MONTHLY);
-        Account accountDisabled = new Account(testUser, accountName + "_disabled", AccountType.STANDARD, testUser, null, AccountBillingCycle.MONTHLY);
+        Account accountEnabled = new Account(testUser, accountName + "_enabled", AccountType.STANDARD, testUser);
+        Account accountDisabled = new Account(testUser, accountName + "_disabled", AccountType.STANDARD, testUser);
         accountDisabled.setDisabledDateTime(Instant.now());
 
         accountRepository.save(accountEnabled);
@@ -235,10 +222,10 @@ public class AccountRepositoryTest {
     public void shouldSaveAndFindAdministrator() {
 
         assertThat(accountRepository.count(), is(0L));
-        User testAdmin = new User("0505550000");
+        User testAdmin = new User("0505550000", null, null);
         testAdmin = userRepository.save(testAdmin);
 
-        Account account = new Account(testUser, accountName, AccountType.STANDARD, testUser, null, AccountBillingCycle.MONTHLY);
+        Account account = new Account(testUser, accountName, AccountType.STANDARD, testUser);
         account.addAdministrator(testAdmin);
         accountRepository.save(account);
 
@@ -263,60 +250,23 @@ public class AccountRepositoryTest {
 
         assertThat(accountRepository.count(), is(0L));
 
-        User testUser = new User("0505550000");
+        User testUser = new User("0505550000", null, null);
         testUser = userRepository.save(testUser);
         Group testGroup = new Group("testGroup", testUser);
         testGroup = groupRepository.save(testGroup);
-        Account account = new Account(testUser, accountName, AccountType.STANDARD, testUser, null, AccountBillingCycle.MONTHLY);
+        Account account = new Account(testUser, accountName, AccountType.STANDARD, testUser);
         account = accountRepository.save(account);
-        PaidGroup testPaidGroup = new PaidGroup(testGroup, account, testUser);
-        testPaidGroup = paidGroupRepository.save(testPaidGroup);
-
-        account.addPaidGroup(testPaidGroup);
+        account.addPaidGroup(testGroup);
         accountRepository.save(account);
 
         Account accountFromDbByName = accountRepository.findByAccountName(accountName).get(0);
         assertNotNull(accountFromDbByName);
         assertNotNull(accountFromDbByName.getPaidGroups());
         assertThat(accountFromDbByName.getPaidGroups().size(), is(1));
-        PaidGroup paidGroupFromAccount = accountFromDbByName.getPaidGroups().iterator().next();
+        Group paidGroupFromAccount = accountFromDbByName.getPaidGroups().iterator().next();
         assertNotNull(paidGroupFromAccount);
         assertThat(paidGroupFromAccount.getAccount(), is(accountFromDbByName));
-        assertThat(paidGroupFromAccount.getGroup(), is(testGroup));
-        assertThat(paidGroupFromAccount.getAddedByUser(), is(testUser));
-
-        Account accountFromDbByPaidGroup = accountRepository.findByPaidGroups(testPaidGroup);
-        assertNotNull(accountFromDbByPaidGroup);
-        assertThat(accountFromDbByPaidGroup.getAccountName(), is(accountName));
 
     }
-
-    @Test
-    @Rollback
-    public void shouldSaveGroupLimits() {
-
-        assertThat(accountRepository.count(), is(0L));
-
-        Account account = new Account(testUser, accountName, AccountType.STANDARD, testUser, null, AccountBillingCycle.MONTHLY);
-        account.setMaxSizePerGroup(500);
-        account.setMaxSubGroupDepth(3);
-        account.setFreeFormMessages(100);
-        account.setMaxNumberGroups(10);
-
-        accountRepository.save(account);
-
-        Account accountFromDb = accountRepository.findByAccountName(accountName).get(0);
-
-        assertEquals(accountFromDb.getFreeFormMessages(), 100);
-        assertEquals(accountFromDb.getMaxSizePerGroup(), 500);
-        assertEquals(accountFromDb.getMaxSubGroupDepth(), 3);
-        assertEquals(accountFromDb.getMaxNumberGroups(), 10);
-        assertEquals(accountFromDb.getMaxSubGroupDepth(), 3);
-
-        accountFromDb.setFreeFormMessages(0);
-        accountFromDb = accountRepository.save(accountFromDb);
-        assertEquals(accountFromDb.getFreeFormMessages(), 0);
-
-    }
-
+    
 }

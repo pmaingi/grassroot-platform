@@ -1,7 +1,6 @@
 package za.org.grassroot.services.livewire;
 
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.beans.factory.annotation.Value;
@@ -14,10 +13,11 @@ import org.springframework.security.access.AccessDeniedException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
-import za.org.grassroot.core.domain.Group;
+import za.org.grassroot.core.domain.BaseRoles;
 import za.org.grassroot.core.domain.Notification;
 import za.org.grassroot.core.domain.User;
 import za.org.grassroot.core.domain.geo.GeoLocation;
+import za.org.grassroot.core.domain.group.Group;
 import za.org.grassroot.core.domain.livewire.DataSubscriber;
 import za.org.grassroot.core.domain.livewire.LiveWireAlert;
 import za.org.grassroot.core.domain.livewire.LiveWireLog;
@@ -32,6 +32,7 @@ import za.org.grassroot.core.util.AfterTxCommitTask;
 import za.org.grassroot.core.util.DateTimeUtil;
 import za.org.grassroot.core.util.PhoneNumberUtil;
 import za.org.grassroot.integration.location.UssdLocationServicesBroker;
+import za.org.grassroot.services.PermissionBroker;
 import za.org.grassroot.services.geo.GeographicSearchType;
 import za.org.grassroot.services.util.LogsAndNotificationsBroker;
 import za.org.grassroot.services.util.LogsAndNotificationsBundle;
@@ -45,21 +46,18 @@ import java.time.Instant;
 import java.time.LocalDate;
 import java.time.ZoneOffset;
 import java.time.temporal.ChronoUnit;
-import java.util.HashSet;
-import java.util.List;
-import java.util.Objects;
-import java.util.Set;
+import java.util.*;
 import java.util.stream.Collectors;
 
 /**
  * Created by luke on 2017/05/06.
  */
-@Service
+@Service @Slf4j
 public class LiveWireAlertBrokerImpl implements LiveWireAlertBroker {
 
-    private static final Logger logger = LoggerFactory.getLogger(LiveWireAlertBroker.class);
+    private static final Collection<LiveWireAlertDestType> PUBLIC_TYPES = Arrays.asList(LiveWireAlertDestType.PUBLIC_LIST,
+            LiveWireAlertDestType.SINGLE_AND_PUBLIC);
 
-    // todo : consolidate several of these using entity manager
     private final LiveWireAlertRepository alertRepository;
     private final UserRepository userRepository;
     private final GroupRepository groupRepository;
@@ -73,6 +71,8 @@ public class LiveWireAlertBrokerImpl implements LiveWireAlertBroker {
     private MessageSourceAccessor messageSource;
     private UssdLocationServicesBroker locationServicesBroker;
 
+    private final PermissionBroker permissionBroker;
+
     protected final static double KM_PER_DEGREE = 111.045;
 
     @Value("${grassroot.livewire.instant.minsize:100}")
@@ -82,7 +82,7 @@ public class LiveWireAlertBrokerImpl implements LiveWireAlertBroker {
     private int minGroupTasksForInstantAlert;
 
     @Autowired
-    public LiveWireAlertBrokerImpl(LiveWireAlertRepository alertRepository, UserRepository userRepository, GroupRepository groupRepository, MeetingRepository meetingRepository, EntityManager entityManager, DataSubscriberRepository dataSubscriberRepository, ApplicationEventPublisher applicationEventPublisher, LogsAndNotificationsBroker logsAndNotificationsBroker) {
+    public LiveWireAlertBrokerImpl(LiveWireAlertRepository alertRepository, UserRepository userRepository, GroupRepository groupRepository, MeetingRepository meetingRepository, EntityManager entityManager, DataSubscriberRepository dataSubscriberRepository, ApplicationEventPublisher applicationEventPublisher, LogsAndNotificationsBroker logsAndNotificationsBroker,PermissionBroker permissionBroker) {
         this.alertRepository = alertRepository;
         this.userRepository = userRepository;
         this.groupRepository = groupRepository;
@@ -91,6 +91,7 @@ public class LiveWireAlertBrokerImpl implements LiveWireAlertBroker {
         this.dataSubscriberRepository = dataSubscriberRepository;
         this.applicationEventPublisher = applicationEventPublisher;
         this.logsAndNotificationsBroker = logsAndNotificationsBroker;
+        this.permissionBroker = permissionBroker;
     }
 
     @Autowired
@@ -170,7 +171,7 @@ public class LiveWireAlertBrokerImpl implements LiveWireAlertBroker {
         Objects.requireNonNull(type);
         Objects.requireNonNull(entityUid);
 
-        logger.info("contact user UID = {}", contactUserUid);
+        log.info("contact user UID = {}", contactUserUid);
 
         if (destType != null && !LiveWireAlertDestType.PUBLIC_LIST.equals(destType)) {
             Objects.requireNonNull(destSubscriber);
@@ -197,7 +198,7 @@ public class LiveWireAlertBrokerImpl implements LiveWireAlertBroker {
             if (contactUser == null) {
                 throw new IllegalArgumentException("Contact user must have been created before entering here");
             }
-            logger.info("setting contact user with number, {}", contactUser.getPhoneNumber());
+            log.info("setting contact user with number, {}", contactUser.getPhoneNumber());
             builder.contactUser(contactUser);
         }
 
@@ -259,7 +260,7 @@ public class LiveWireAlertBrokerImpl implements LiveWireAlertBroker {
         alert.setComplete(true);
 
         LogsAndNotificationsBundle bundle = alertCompleteBundle(userRepository.findOneByUid(userUid), alert);
-        logger.info("bundle notifications: {}", bundle.getNotifications());
+        log.info("bundle notifications: {}", bundle.getNotifications());
 
         AfterTxCommitTask task = () -> logsAndNotificationsBroker.asyncStoreBundle(bundle);
         applicationEventPublisher.publishEvent(task);
@@ -304,12 +305,15 @@ public class LiveWireAlertBrokerImpl implements LiveWireAlertBroker {
     @Override
     @Transactional
     public void updateDescription(String userUid, String alertUid, String description) {
+        log.info("Updating description, userId = {}, alert Id = {}, description = {}", userUid, alertUid, description);
         Objects.requireNonNull(userUid);
         Objects.requireNonNull(alertUid);
         Objects.requireNonNull(description);
 
         User user = userRepository.findOneByUid(userUid);
         LiveWireAlert alert = alertRepository.findOneByUid(alertUid);
+
+        log.info("About to validate user can do the necessary");
         validateCreatingOrReviewUser(user, alert);
 
         alert.setDescription(description);
@@ -361,9 +365,12 @@ public class LiveWireAlertBrokerImpl implements LiveWireAlertBroker {
         validateCreatingUser(user, alert);
 
         alert.setComplete(true);
+
+
+
         LogsAndNotificationsBundle bundle = alertCompleteBundle(user, alert);
 
-        logger.info("bundle notifications: {}", bundle.getNotifications());
+        log.info("bundle notifications: {}", bundle.getNotifications());
         logsAndNotificationsBroker.asyncStoreBundle(bundle);
     }
 
@@ -388,7 +395,7 @@ public class LiveWireAlertBrokerImpl implements LiveWireAlertBroker {
                     .build();
             bundle.addLog(contactLog);
             Notification notification = generateMadeContactNotification(contactLog);
-            logger.info("adding other contact notification: {}", notification);
+            log.info("adding other contact notification: {}", notification);
             bundle.addNotification(notification);
         }
         return bundle;
@@ -405,7 +412,7 @@ public class LiveWireAlertBrokerImpl implements LiveWireAlertBroker {
         LiveWireAlert alert = alertRepository.findOneByUid(alertUid);
         validateCreatingUser(user, alert);
 
-        logger.info("Going to add a location to LiveWire alert, should be off main thread ...");
+        log.info("Going to add a location to LiveWire alert, should be off main thread ...");
 
         if (location != null) {
             alert.setLocation(location);
@@ -421,6 +428,7 @@ public class LiveWireAlertBrokerImpl implements LiveWireAlertBroker {
     @Override
     @Transactional(readOnly = true)
     public Page<LiveWireAlert> loadAlerts(String userUid, boolean unreviewedOnly, Pageable pageable) {
+        permissionBroker.validateSystemRole(userRepository.findOneByUid(userUid), BaseRoles.ROLE_LIVEWIRE_USER);
         Objects.requireNonNull(userUid);
         Objects.requireNonNull(pageable);
 
@@ -449,24 +457,25 @@ public class LiveWireAlertBrokerImpl implements LiveWireAlertBroker {
     @Override
     @Transactional
     public void setTagsForAlert(String userUid, String alertUid, List<String> tags) {
+        permissionBroker.validateSystemRole(userRepository.findOneByUid(userUid), BaseRoles.ROLE_ALPHA_TESTER);
         Objects.requireNonNull(userUid);
         Objects.requireNonNull(alertUid);
 
-        logger.info("tags received: {}", tags);
+        log.info("tags received: {}", tags);
 
         if (!canUserTag(userUid)) {
             throw new AccessDeniedException("This user does not have permission to tag");
         }
 
         if (listIsNullEmptyOrAllBlank(tags)) {
-            logger.info("tags are empty!");
+            log.info("tags are empty!");
             throw new InvalidParameterException("Error! No tags provided");
         }
 
         LiveWireAlert alert = alertRepository.findOneByUid(alertUid);
         alert.addTags(tags);
 
-        logger.info("set tags to: {}", alert.getTagList());
+        log.info("set tags to: {}", alert.getTagList());
     }
 
     private boolean listIsNullEmptyOrAllBlank(List<String> list) {
@@ -481,8 +490,11 @@ public class LiveWireAlertBrokerImpl implements LiveWireAlertBroker {
         Objects.requireNonNull(alertUid);
 
         if (!canUserRelease(userUid)) {
-            throw new AccessDeniedException("This user does not have permission to release");
+            log.info("Looks like user isn't a subscriber admin, so check for system role");
+            permissionBroker.validateSystemRole(userRepository.findOneByUid(userUid), BaseRoles.ROLE_LIVEWIRE_USER);
         }
+
+        log.info("User can release alert, proceeding ...");
 
         User user = userRepository.findOneByUid(userUid);
         LiveWireAlert alert = alertRepository.findOneByUid(alertUid);
@@ -490,7 +502,7 @@ public class LiveWireAlertBrokerImpl implements LiveWireAlertBroker {
             alert.addTags(tags);
         }
 
-        logger.debug("here are the alert tags: {}", tags);
+        log.info("LiveWire alert tagged with: {}", tags);
 
         alert.setReviewed(true);
         alert.setReviewedByUser(user);
@@ -507,7 +519,7 @@ public class LiveWireAlertBrokerImpl implements LiveWireAlertBroker {
         if (send) {
             alert.revisePublicLists(publicListUids);
             alert.setSendTime(Instant.now());
-            logger.info("set public list UIDs to: {}", alert.getPublicListsUids());
+            LiveWireAlertBrokerImpl.log.info("Set public list UIDs to: {}", alert.getPublicListsUids());
             bundle.addNotification(new LiveWireAlertReleasedNotification(
                     alert.getCreatingUser(),
                     messageSource.getMessage("livewire.alert.released"),
@@ -527,7 +539,7 @@ public class LiveWireAlertBrokerImpl implements LiveWireAlertBroker {
     }
 
     private void validateCreatingOrReviewUser(User user, LiveWireAlert alert) throws AccessDeniedException {
-        logger.info("user UID = {}, alert creating user = {}", user, alert);
+        log.info("user UID = {}, alert creating user = {}", user, alert);
         if (!alert.getCreatingUser().equals(user) && !canUserRelease(user.getUid())) {
             throw new AccessDeniedException("Only the user creating the alert can do that, or a reviewer");
         }
@@ -582,7 +594,7 @@ public class LiveWireAlertBrokerImpl implements LiveWireAlertBroker {
         String mineFilter = searchType.equals(GeographicSearchType.PUBLIC) ? " AND l.creatingUser <>:user "
                 : searchType.equals(GeographicSearchType.PRIVATE) ? " AND l.creatingUser = :user " : "";
 
-        logger.info("searchType = {}, on whether mine? = {}", searchType, mineFilter);
+        log.info("searchType = {}, on whether mine? = {}", searchType, mineFilter);
 
         Instant lastWeekTime = getLastWeekTime();
 
@@ -603,7 +615,7 @@ public class LiveWireAlertBrokerImpl implements LiveWireAlertBroker {
                 "           + SIN(RADIANS(:latpoint)) " +
                 "           * SIN(RADIANS(l.location.latitude))))) ";
 
-        logger.debug("livewire alert location search = {}", query);
+        log.debug("livewire alert location search = {}", query);
 
         TypedQuery<LiveWireAlert> typedQuery = entityManager.createQuery(query,LiveWireAlert.class)
                 .setParameter("radius", (double)radius)
@@ -617,6 +629,12 @@ public class LiveWireAlertBrokerImpl implements LiveWireAlertBroker {
         }
 
         return typedQuery.getResultList();
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public Page<LiveWireAlert> fetchReleasedAlerts(Pageable pageRequest) {
+        return alertRepository.findByCompleteTrueAndReviewedTrueAndSentTrueAndDestinationTypeIn(PUBLIC_TYPES, pageRequest);
     }
 
     private Instant getLastWeekTime(){

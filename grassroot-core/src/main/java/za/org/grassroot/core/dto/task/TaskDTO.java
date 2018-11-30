@@ -6,9 +6,10 @@ import com.google.common.collect.ComparisonChain;
 import io.swagger.annotations.ApiModel;
 import lombok.Getter;
 import lombok.Setter;
+import org.springframework.data.jpa.domain.Specification;
 import za.org.grassroot.core.domain.JpaEntityType;
-import za.org.grassroot.core.domain.Membership;
 import za.org.grassroot.core.domain.User;
+import za.org.grassroot.core.domain.group.Membership;
 import za.org.grassroot.core.domain.task.*;
 import za.org.grassroot.core.enums.EventType;
 import za.org.grassroot.core.enums.TaskType;
@@ -24,7 +25,6 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 
-import static org.springframework.data.jpa.domain.Specifications.where;
 import static za.org.grassroot.core.specifications.EventLogSpecifications.*;
 
 /**
@@ -47,6 +47,7 @@ public class TaskDTO implements Comparable<TaskDTO> {
 
     private final String parentUid;
     private final String parentName;
+    private final String ancestorGroupUid;
 
     private final String deadline;
     private final String deadlineISO;
@@ -70,12 +71,16 @@ public class TaskDTO implements Comparable<TaskDTO> {
     @JsonIgnore
     private final LocalDateTime deadlineDateTime;
 
+    @Setter private boolean errorReport;
+
+
     private TaskDTO(User user, Task task) {
         this.taskUid = task.getUid();
         this.title = task.getName();
 
         this.parentUid = task.getParent().getUid();
 	    this.parentName = task.getParent().getName();
+	    this.ancestorGroupUid = task.getAncestorGroup().getUid();
 
         this.wholeGroupAssigned = task.isAllGroupMembersAssigned();
         this.assignedMemberCount = task.countAssignedMembers();
@@ -97,8 +102,8 @@ public class TaskDTO implements Comparable<TaskDTO> {
      * worthwhile trade-off because it ensures consistency on this object data at multiple places in code.
      */
     public TaskDTO(Event event, User user, EventLogRepository eventLogRepository) {
-        this(event, user, eventLogRepository.findOne(where(forEvent(event))
-                .and(forUser(user)).and(isResponseToAnEvent())));
+        this(event, user, eventLogRepository.findOne(Specification.where(forEvent(event))
+                .and(forUser(user)).and(isResponseToAnEvent())).orElse(null));
     }
 
     public TaskDTO(Event event, User user, EventLog eventLog) {

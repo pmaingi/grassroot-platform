@@ -1,13 +1,17 @@
 package za.org.grassroot.webapp.controller.ussd;
 
 import com.google.common.collect.ImmutableMap;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Controller;
 import za.org.grassroot.core.domain.User;
+import za.org.grassroot.core.enums.Province;
 import za.org.grassroot.integration.experiments.ExperimentBroker;
 import za.org.grassroot.services.async.AsyncUserLogger;
 import za.org.grassroot.services.user.UserManagementService;
 import za.org.grassroot.services.util.CacheUtilService;
+import za.org.grassroot.webapp.controller.BaseController;
 import za.org.grassroot.webapp.controller.ussd.menus.USSDMenu;
 import za.org.grassroot.webapp.enums.USSDSection;
 import za.org.grassroot.webapp.model.ussd.AAT.Request;
@@ -26,8 +30,11 @@ import static za.org.grassroot.webapp.enums.USSDSection.*;
  * Created by luke on 2015/08/14.
  *
  */
-@Controller
+@Controller @Slf4j
 public class USSDBaseController {
+
+    @Value("${grassroot.languages.ussd.minsessions:2}")
+    protected int preLanguageSessions;
 
     @Autowired
     private ExperimentBroker experimentBroker;
@@ -38,21 +45,10 @@ public class USSDBaseController {
     @Autowired
     protected AsyncUserLogger userLogger;
 
-    @Autowired
     protected CacheUtilService cacheManager;
 
     protected USSDMessageAssembler messageAssembler;
     protected USSDMenuUtil ussdMenuUtil;
-
-    @Autowired
-    protected void setUssdMenuUtil(USSDMenuUtil ussdMenuUtil) {
-        this.ussdMenuUtil = ussdMenuUtil;
-    }
-
-    @Autowired
-    protected void setMessageAssembler(USSDMessageAssembler messageAssembler) {
-        this.messageAssembler = messageAssembler;
-    }
 
     /**
      * SECTION: Constants used throughout the code
@@ -68,8 +64,7 @@ public class USSDBaseController {
             todoMenus = "todo/",
             safetyMenus = "safety/",
             moreMenus = "more/",
-            U404= "error",
-            homeMore = "/more/";
+            U404= "error";
     // referencing these from the Util class so can be common across tests etc, but stating here so not cumbersome in sub-classes
     protected static final String
             phoneNumber = USSDUrlUtil.phoneNumber,
@@ -120,8 +115,24 @@ public class USSDBaseController {
             //new SimpleEntry<>(SAFETY_GROUP_MANAGER, new String[]{safetyMenus + startMenu, openingMenuKey + safetyKey})).
                     collect(Collectors.toMap(AbstractMap.SimpleEntry::getKey, AbstractMap.SimpleEntry::getValue)));
 
-    private static final List<USSDSection> openingSequenceWithGroups = Arrays.asList(
-            MEETINGS, VOTES, TODO, GROUP_MANAGER, USER_PROFILE, MORE);
+    private static final List<USSDSection> openingSequenceWithGroups = Arrays.asList(MEETINGS, VOTES, TODO, GROUP_MANAGER, USER_PROFILE, MORE);
+
+    /* Field setters */
+
+    @Autowired
+    protected void setUssdMenuUtil(USSDMenuUtil ussdMenuUtil) {
+        this.ussdMenuUtil = ussdMenuUtil;
+    }
+
+    @Autowired
+    protected void setMessageAssembler(USSDMessageAssembler messageAssembler) {
+        this.messageAssembler = messageAssembler;
+    }
+
+    @Autowired
+    public void setCacheManager(CacheUtilService cacheUtilService) {
+        this.cacheManager = cacheUtilService;
+    }
 
     /*
     Methods that form the menu objects
@@ -142,6 +153,11 @@ public class USSDBaseController {
             homeMenu.addMenuOption(urlMsgPair[0], getMessage(urlMsgPair[1], user));
         });
         return homeMenu;
+    }
+
+    protected USSDMenu promptLanguageMenu(User user) {
+        return new USSDMenu(messageAssembler.getMessage("language.prompt", user),
+                languageOptions(userMenus + "language-do?language="));
     }
 
     /*
@@ -175,6 +191,21 @@ public class USSDBaseController {
         return optionsYesNo(sesionUser, nextUri, nextUri);
     }
 
+    protected Map<String, String> provinceOptions(User user, String url) {
+        Map<String, String> options = new LinkedHashMap<>();
+        Province.ZA_CANONICAL.forEach(p ->
+                options.put(url + p, getMessage("province." + p.name().substring("ZA_".length()), user)));
+        return options;
+    }
+
+    protected Map<String, String> languageOptions(String url) {
+        Map<String, String> options = new LinkedHashMap<>();
+        for (Map.Entry<String, String> entry : BaseController.getImplementedLanguages().entrySet()) {
+            options.put(url + entry.getKey(), entry.getValue());
+        }
+        return options;
+    }
+
     /*
     i18n helper methods
      */
@@ -204,6 +235,10 @@ public class USSDBaseController {
 
     protected String getMessage(String messageKey, String language) {
         return messageAssembler.getMessage(messageKey, language);
+    }
+
+    protected String getMessage(String messageKey, String[] params, User user) {
+        return messageAssembler.getMessage(messageKey, params, user);
     }
 
 }

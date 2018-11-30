@@ -10,7 +10,9 @@ import org.springframework.security.access.AccessDeniedException;
 import org.springframework.web.bind.ServletRequestDataBinder;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
-import za.org.grassroot.core.domain.*;
+import za.org.grassroot.core.domain.JpaEntityType;
+import za.org.grassroot.core.domain.Permission;
+import za.org.grassroot.core.domain.User;
 import za.org.grassroot.core.domain.geo.GeoLocation;
 import za.org.grassroot.core.domain.task.Event;
 import za.org.grassroot.core.domain.task.EventReminderType;
@@ -50,7 +52,6 @@ public class MeetingRestController {
 
     private static final Logger log = LoggerFactory.getLogger(MeetingRestController.class);
 
-    // todo: consolidate in this list
     private final UserManagementService userManagementService;
     private final EventLogBroker eventLogBroker;
     private final EventBroker eventBroker;
@@ -113,7 +114,7 @@ public class MeetingRestController {
             }
 
             log.debug("meetingHelper: {}", helper);
-            Meeting meeting = eventBroker.createMeeting(helper);
+            Meeting meeting = eventBroker.createMeeting(helper, UserInterfaceType.ANDROID);
             TaskDTO createdMeeting = taskBroker.load(user.getUid(), meeting.getUid(), TaskType.MEETING);
             return RestUtil.okayResponseWithData(RestMessage.MEETING_CREATED, Collections.singletonList(createdMeeting));
         } catch (EventStartTimeNotInFutureException e) {
@@ -193,11 +194,16 @@ public class MeetingRestController {
     }
 
     @RequestMapping(value = "/rsvps/{phoneNumber}/{code}/{meetingUid}", method = RequestMethod.GET)
-    public ResponseEntity<MeetingRsvpsDTO> listRsvps(@PathVariable String phoneNumber, @PathVariable String code,
+    public ResponseEntity listRsvps(@PathVariable String phoneNumber, @PathVariable String code,
                                                      @PathVariable String meetingUid) {
 
         User user = userManagementService.findByInputNumber(phoneNumber);
         Meeting meeting = eventBroker.loadMeeting(meetingUid);
+
+        if (meeting == null) {
+            log.error("Error fetching meeting, does not exist, likely broken client");
+            return RestUtil.errorResponse(RestMessage.TASK_NOT_FOUND);
+        }
 
         ResponseTotalsDTO totals = eventLogBroker.getResponseCountForEvent(meeting);
 
@@ -223,7 +229,7 @@ public class MeetingRestController {
         Event event = eventBroker.load(meetingUid);
         ResponseEntity<ResponseWrapper> responseWrapper;
         if(!event.isCanceled()){
-            eventBroker.cancel(userUid,meetingUid);
+            eventBroker.cancel(userUid,meetingUid, true);
             responseWrapper = RestUtil.messageOkayResponse(RestMessage.MEETING_CANCELLED);
         }else{
             responseWrapper = RestUtil.errorResponse(HttpStatus.CONFLICT, RestMessage.MEETING_ALREADY_CANCELLED);

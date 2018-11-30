@@ -4,12 +4,15 @@ package za.org.grassroot.core.domain.task;
  * Created by luke on 2015/07/16.
  */
 
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import lombok.Getter;
+import lombok.Setter;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.util.StringUtils;
-import za.org.grassroot.core.domain.Group;
+import za.org.grassroot.core.domain.TagHolder;
 import za.org.grassroot.core.domain.UidIdentifiable;
 import za.org.grassroot.core.domain.User;
+import za.org.grassroot.core.domain.group.Group;
+import za.org.grassroot.core.enums.EventSpecialForm;
 import za.org.grassroot.core.enums.EventType;
 import za.org.grassroot.core.util.DateTimeUtil;
 
@@ -21,6 +24,7 @@ import java.time.temporal.ChronoUnit;
 import java.util.HashSet;
 import java.util.Set;
 
+@Slf4j
 @Entity
 @Table(name = "event")
 @Inheritance(strategy = InheritanceType.SINGLE_TABLE)
@@ -28,10 +32,15 @@ import java.util.Set;
 public abstract class Event<P extends UidIdentifiable> extends AbstractEventEntity
 		implements TodoContainer, Task<P>, Serializable {
 
-	private static final Logger logger = LoggerFactory.getLogger(Event.class);
+	// for present
+	public static final int MAX_NAME_LENGTH = 100;
 
 	@Column(name = "canceled")
 	private boolean canceled;
+
+	@Enumerated(EnumType.STRING)
+	@Column(name = "type", insertable = false, updatable = false)
+	@Getter private EventType type;
 
     /*
 	Version used by hibernate to resolve conflicting updates. Do not update set it, it is for Hibernate only
@@ -67,6 +76,9 @@ public abstract class Event<P extends UidIdentifiable> extends AbstractEventEnti
 	@OneToMany(mappedBy = "parentEvent")
 	private Set<Todo> todos = new HashSet<>();
 
+	@OneToMany(mappedBy = "event")
+	private Set<EventLog> eventLogs = new HashSet<>();
+
 	@ManyToOne
 	@JoinColumn(name = "ancestor_group_id", nullable = false)
 	private Group ancestorGroup;
@@ -79,6 +91,10 @@ public abstract class Event<P extends UidIdentifiable> extends AbstractEventEnti
 	// we use these just to simplify some internal methods, hence transient - actual logic is to persist via eventlogs
     @Transient
     private String imageUrl;
+
+	@Column(name="special_form")
+	@Enumerated(EnumType.STRING)
+	@Getter @Setter protected EventSpecialForm specialForm;
 
 	public abstract EventType getEventType();
 
@@ -149,7 +165,7 @@ public abstract class Event<P extends UidIdentifiable> extends AbstractEventEnti
 
 	public void updateScheduledReminderTime() {
 		Group group = getAncestorGroup();
-		logger.debug("updating scheduled reminder time, type: {}, group minutes: {}", getReminderType(), group.getReminderMinutes());
+		log.debug("updating scheduled reminder time, type: {}, group minutes: {}", getReminderType(), group.getReminderMinutes());
 		if (getReminderType().equals(EventReminderType.CUSTOM)) {
 			this.scheduledReminderTime = getEventStartDateTime().minus(getCustomReminderMinutes(), ChronoUnit.MINUTES);
 		} else if (getReminderType().equals(EventReminderType.GROUP_CONFIGURED) && group.getReminderMinutes() > 0) {
@@ -158,7 +174,7 @@ public abstract class Event<P extends UidIdentifiable> extends AbstractEventEnti
 			this.scheduledReminderTime = null;
 		}
 
-		logger.debug("inside meeting, scheduled reminder time: {}", scheduledReminderTime);
+		log.debug("inside meeting, scheduled reminder time: {}", scheduledReminderTime);
 
         if (this.scheduledReminderTime != null) {
             this.scheduledReminderTime = DateTimeUtil.restrictToDaytime(this.scheduledReminderTime, this.eventStartDateTime,
@@ -169,7 +185,8 @@ public abstract class Event<P extends UidIdentifiable> extends AbstractEventEnti
         }
 	}
 
-    public boolean isHasImage() {
+	@Override
+    public boolean hasImage() {
         return !StringUtils.isEmpty(imageUrl);
     }
 
@@ -212,6 +229,14 @@ public abstract class Event<P extends UidIdentifiable> extends AbstractEventEnti
 		}
 		return todos;
 	}
+
+	public Set<EventLog> getEventLogs() {
+		if (eventLogs == null) {
+			eventLogs = new HashSet<>();
+		}
+		return eventLogs;
+	}
+
 
 	// STRANGE: dunno why this <User> generics is not recognized by rest of code!?
 	public Set<User> getAllMembers() {

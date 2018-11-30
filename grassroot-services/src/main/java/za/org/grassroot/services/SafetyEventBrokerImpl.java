@@ -6,15 +6,18 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.security.access.AccessDeniedException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
-import za.org.grassroot.core.domain.*;
+import za.org.grassroot.core.domain.SafetyEvent;
+import za.org.grassroot.core.domain.User;
 import za.org.grassroot.core.domain.geo.Address;
+import za.org.grassroot.core.domain.group.Group;
+import za.org.grassroot.core.domain.group.GroupLog;
 import za.org.grassroot.core.enums.GroupLogType;
 import za.org.grassroot.core.repository.GroupLogRepository;
 import za.org.grassroot.core.repository.GroupRepository;
 import za.org.grassroot.core.repository.SafetyEventRepository;
 import za.org.grassroot.core.repository.UserRepository;
 import za.org.grassroot.integration.messaging.MessagingServiceBroker;
-import za.org.grassroot.services.user.AddressBroker;
+import za.org.grassroot.services.geo.AddressBroker;
 import za.org.grassroot.services.util.CacheUtilService;
 
 import java.time.Instant;
@@ -98,6 +101,8 @@ public class SafetyEventBrokerImpl implements SafetyEventBroker {
         SafetyEvent safetyEvent = safetyEventRepository.findOneByUid(safetyEventUid);
         User respondent = userRepository.findOneByUid(userUid);
 
+        boolean wasRespondedToPrior = safetyEvent.isRespondedTo();
+
         safetyEvent.setRespondedTo(true);
         safetyEvent.setActive(false);
         safetyEvent.setFalseAlarm(!isValid);
@@ -108,20 +113,21 @@ public class SafetyEventBrokerImpl implements SafetyEventBroker {
             String message = (count++ > 3) ?
                     messageAssemblingService.createBarringMessage(safetyEvent.getActivatedBy()) :
                     messageAssemblingService.createFalseSafetyEventActivationMessage(safetyEvent.getActivatedBy(), count);
-            messagingServiceBroker.sendSMS(requestor.getPhoneNumber(), message, false);
+            messagingServiceBroker.sendSMS(requestor.getUid(), message, false);
         }
 
-        Group group = safetyEvent.getGroup();
-        User requestor = safetyEvent.getActivatedBy();
-        group.getMembers().stream()
-                .filter(m -> !requestor.equals(m))
-                .forEach((m -> sendRespondedNotice(safetyEvent, respondent, m)));
-
+        if (!wasRespondedToPrior) {
+            Group group = safetyEvent.getGroup();
+            User requestor = safetyEvent.getActivatedBy();
+            group.getMembers().stream()
+                    .filter(m -> !requestor.equals(m))
+                    .forEach((m -> sendRespondedNotice(safetyEvent, respondent, m)));
+        }
     }
 
     private void sendRespondedNotice(SafetyEvent safetyEvent, User responder, User member) {
         messagingServiceBroker.sendSMS(messageAssemblingService.createSafetyEventReportMessage(
-                member, responder, safetyEvent, true), member.getPhoneNumber(), false);
+                member, responder, safetyEvent, true), member.getUid(), false);
         cacheUtilService.clearSafetyEventResponseForUser(member, safetyEvent);
     }
 
@@ -167,7 +173,7 @@ public class SafetyEventBrokerImpl implements SafetyEventBroker {
         if (deactivateGroup && group.getCreatedByUser().equals(user)
                 && group.getDescendantEvents().isEmpty() && group.getDescendantEvents().isEmpty()) {
             group.setActive(false);
-            groupLogRepository.save(new GroupLog(group, user, GroupLogType.GROUP_REMOVED, 0L, "safety group deactivated"));
+            groupLogRepository.save(new GroupLog(group, user, GroupLogType.GROUP_REMOVED, "safety group deactivated"));
         }
     }
 
@@ -201,7 +207,7 @@ public class SafetyEventBrokerImpl implements SafetyEventBroker {
         for (User respondent : group.getMembers()) {
             if (!respondent.equals(requestor)) {
                 String message = messageAssemblingService.createSafetyEventMessage(respondent, requestor, address, true);
-                messagingServiceBroker.sendSMS(message, respondent.getPhoneNumber(), false);
+                messagingServiceBroker.sendSMS(message, respondent.getUid(), false);
             }
         }
 

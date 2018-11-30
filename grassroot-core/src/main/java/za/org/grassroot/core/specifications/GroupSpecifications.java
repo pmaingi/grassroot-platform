@@ -1,9 +1,16 @@
 package za.org.grassroot.core.specifications;
 
 import org.springframework.data.jpa.domain.Specification;
-import za.org.grassroot.core.domain.*;
+import za.org.grassroot.core.domain.Permission;
+import za.org.grassroot.core.domain.Role_;
+import za.org.grassroot.core.domain.User;
+import za.org.grassroot.core.domain.group.Group;
+import za.org.grassroot.core.domain.group.Group_;
+import za.org.grassroot.core.domain.group.Membership;
+import za.org.grassroot.core.domain.group.Membership_;
 
 import javax.persistence.criteria.Join;
+import javax.persistence.criteria.Predicate;
 import java.time.Instant;
 import java.util.Set;
 
@@ -23,8 +30,17 @@ public final class GroupSpecifications {
         };
     }
 
-    public static Specification<Group> paidForStatus(boolean isPaidFor) {
-        return (root, query, cb) -> cb.equal(root.get(Group_.paidFor), isPaidFor);
+    public static Specification<Group> userIsMemberAndCanSeeMembers(User user) {
+        return userIsMemberAndHasPermission(user, Permission.GROUP_PERMISSION_SEE_MEMBER_DETAILS);
+    }
+
+    public static Specification<Group> userIsMemberAndHasPermission(User user, Permission permission) {
+        return (root, query, cb) -> {
+            Join<Group, Membership> members = root.join(Group_.memberships);
+            Predicate isMember = cb.equal(members.get(Membership_.user), user);
+            Predicate canSeeMembers = cb.isMember(permission, members.get(Membership_.role).get(Role_.permissions));
+            return cb.and(isMember, canSeeMembers);
+        };
     }
 
     public static Specification<Group> isActive() {

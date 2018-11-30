@@ -8,7 +8,6 @@ import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.AccessDeniedException;
 import org.springframework.web.bind.annotation.*;
-import za.org.grassroot.core.domain.JpaEntityType;
 import za.org.grassroot.core.domain.User;
 import za.org.grassroot.core.domain.task.Event;
 import za.org.grassroot.core.domain.task.EventReminderType;
@@ -24,6 +23,7 @@ import za.org.grassroot.services.exception.EventStartTimeNotInFutureException;
 import za.org.grassroot.services.task.EventBroker;
 import za.org.grassroot.services.task.TaskBroker;
 import za.org.grassroot.services.task.VoteBroker;
+import za.org.grassroot.services.task.VoteHelper;
 import za.org.grassroot.services.user.UserManagementService;
 import za.org.grassroot.webapp.enums.RestMessage;
 import za.org.grassroot.webapp.model.rest.wrappers.EventWrapper;
@@ -48,7 +48,6 @@ public class VoteRestController {
 
     private static final Logger log = LoggerFactory.getLogger(VoteRestController.class);
 
-    // todo: clean up some of the dependencies in here
     private final UserManagementService userManagementService;
     private final VoteBroker voteBroker;
     private final EventBroker eventBroker;
@@ -86,11 +85,15 @@ public class VoteRestController {
         }
 
         try {
-            // todo : atomicity in broker calls, also handle bad UIDs
             LocalDateTime eventStartDateTime = LocalDateTime.parse(time.trim(), getPreferredRestFormat());
             List<String> voteOptions = StringArrayUtil.isAllEmptyOrNull(options) ? null : options;
-            Vote vote = eventBroker.createVote(user.getUid(), groupUid, JpaEntityType.GROUP, title, eventStartDateTime,
-                    false, description, membersUid, voteOptions);
+            VoteHelper helper = VoteHelper.builder()
+                    .userUid(user.getUid()).parentUid(groupUid)
+                    .name(title).eventStartDateTime(eventStartDateTime).options(voteOptions)
+                    .description(description).assignMemberUids(membersUid).build();
+            log.info("HELPER: {}", helper);
+            Vote vote = eventBroker.createVote(helper);
+            log.info("response? : {}", vote);
             eventBroker.updateReminderSettings(user.getUid(), vote.getUid(), EventReminderType.CUSTOM,
                     RestUtil.getReminderMinutes(reminderMinutes));
             TaskDTO voteCreated = taskBroker.load(user.getUid(), vote.getUid(), TaskType.VOTE);
@@ -169,7 +172,7 @@ public class VoteRestController {
         ResponseEntity<ResponseWrapper> responseWrapper;
         try {
             LocalDateTime updatedTime = LocalDateTime.parse(time.trim(), getPreferredRestFormat());
-            eventBroker.updateVote(user.getUid(), voteUid, updatedTime, description);
+            voteBroker.updateVote(user.getUid(), voteUid, updatedTime, description);
             TaskDTO updatedTask = taskBroker.load(user.getUid(), voteUid, TaskType.VOTE);
             responseWrapper = RestUtil.okayResponseWithData(RestMessage.VOTE_DETAILS_UPDATED, Collections.singletonList(updatedTask));
         } catch (IllegalStateException e) {
@@ -186,7 +189,7 @@ public class VoteRestController {
         Event event = eventBroker.load(voteUid);
         ResponseEntity<ResponseWrapper> responseWrapper;
         if (!event.isCanceled()){
-            eventBroker.cancel(userUid,voteUid);
+            eventBroker.cancel(userUid,voteUid, true);
             responseWrapper = RestUtil.messageOkayResponse(RestMessage.VOTE_CANCELLED);
         }else{
             responseWrapper = RestUtil.errorResponse(HttpStatus.BAD_REQUEST, RestMessage.VOTE_ALREADY_CLOSED);

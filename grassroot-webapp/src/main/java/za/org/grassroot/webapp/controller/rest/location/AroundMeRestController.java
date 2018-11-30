@@ -7,20 +7,24 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
-import za.org.grassroot.core.domain.Group;
 import za.org.grassroot.core.domain.User;
 import za.org.grassroot.core.domain.geo.GeoLocation;
 import za.org.grassroot.core.domain.geo.ObjectLocation;
+import za.org.grassroot.core.domain.group.Group;
 import za.org.grassroot.core.domain.livewire.LiveWireAlert;
 import za.org.grassroot.core.domain.task.Meeting;
 import za.org.grassroot.core.enums.LiveWireAlertType;
 import za.org.grassroot.core.repository.MeetingRepository;
+import za.org.grassroot.integration.authentication.JwtService;
+import za.org.grassroot.services.geo.GeoLocationBroker;
 import za.org.grassroot.services.geo.GeographicSearchType;
-import za.org.grassroot.services.geo.ObjectLocationBroker;
 import za.org.grassroot.services.group.GroupBroker;
 import za.org.grassroot.services.livewire.LiveWireAlertBroker;
 import za.org.grassroot.services.user.UserManagementService;
+import za.org.grassroot.webapp.controller.rest.BaseRestController;
+import za.org.grassroot.webapp.controller.rest.Grassroot2RestController;
 import za.org.grassroot.webapp.enums.RestMessage;
 import za.org.grassroot.webapp.model.LiveWireAlertDTO;
 import za.org.grassroot.webapp.model.rest.wrappers.ResponseWrapper;
@@ -33,32 +37,32 @@ import java.util.List;
 import java.util.Set;
 import java.util.stream.Collectors;
 
-@Slf4j
-@RestController
-@Api("/api/location")
-@RequestMapping(value = "/api/location")
-public class AroundMeRestController {
+import javax.servlet.http.HttpServletRequest;
 
-    private final ObjectLocationBroker objectLocationBroker;
-    private final UserManagementService userManager;
+@Slf4j @RestController @Grassroot2RestController
+@RequestMapping(value = "/v2/api/location") @Api("/v2/api/location")
+@PreAuthorize("hasRole('ROLE_FULL_USER')")
+public class AroundMeRestController extends BaseRestController {
+
+    private final GeoLocationBroker geoLocationBroker;
     private final GroupBroker groupBroker;
     private final MeetingRepository meetingRepository;
     private final LiveWireAlertBroker liveWireAlertBroker;
 
     @Autowired
-    public AroundMeRestController(ObjectLocationBroker objectLocationBroker, UserManagementService userManager, GroupBroker groupBroker, MeetingRepository meetingRepository, LiveWireAlertBroker liveWireAlertBroker){
-        this.objectLocationBroker = objectLocationBroker;
-        this.userManager = userManager;
+    public AroundMeRestController(GeoLocationBroker geoLocationBroker, UserManagementService userManager, GroupBroker groupBroker, 
+                                        MeetingRepository meetingRepository, LiveWireAlertBroker liveWireAlertBroker, JwtService jwtService) {
+        super(jwtService, userManager);
+        this.geoLocationBroker = geoLocationBroker;
         this.groupBroker = groupBroker;
         this.meetingRepository = meetingRepository;
         this.liveWireAlertBroker = liveWireAlertBroker;
     }
 
-    @RequestMapping(value = "/all/{userUid}", method = RequestMethod.GET)
+    @RequestMapping(value = "/all", method = RequestMethod.GET)
     @ApiOperation(value = "All entities near user", notes = "Fetch all public groups, public meetings, " +
             "and public alerts near to the user, as well as those entities the user belongs to")
-    public ResponseEntity<List<AroundMeDTO>> fetchAllEntitiesNearUser(@PathVariable String userUid,
-                                                                      @RequestParam double latitude,
+    public ResponseEntity<List<AroundMeDTO>> fetchAllEntitiesNearUser(HttpServletRequest request, @RequestParam double latitude,
                                                                       @RequestParam double longitude,
                                                                       @RequestParam int radiusMetres,
                                                                       @ApiParam(value = "Whether to return entities that the user is part of (private), " +
@@ -71,41 +75,48 @@ public class AroundMeRestController {
                                                                                  "name (subject etc) of the entities")
                                                                       @RequestParam(required = false) String filterTerm) {
         GeoLocation location = new GeoLocation(latitude,longitude);
-        User user = userManager.load(userUid);
+        String userUid = getUserIdFromRequest(request);
+        User user = getUserFromRequest(request);
 
         Set<AroundMeDTO> objectLocationSet = new HashSet<>();
 
         GeographicSearchType type = searchType == null ? GeographicSearchType.PUBLIC : searchType;
+        log.info("Inside around me controller, search type: {}, location: {}", searchType, location);
+
         if (includeGroups != null && includeGroups) {
-            objectLocationSet.addAll(objectLocationBroker
+            objectLocationSet.addAll(geoLocationBroker
                     .fetchGroupsNearby(userUid, location, radiusMetres, filterTerm, type)
                     .stream().map(gl -> convertGroupLocation(gl, user)).collect(Collectors.toList())); //Adding Groups near user
         }
-        objectLocationSet.addAll(objectLocationBroker
+        log.info("After hunting groups, have {} entries", objectLocationSet.size());
+
+        objectLocationSet.addAll(geoLocationBroker
                 .fetchMeetingLocationsNearUser(user, location, radiusMetres, type, null)
                 .stream().map(ml -> convertMeetingLocation(ml, user)).collect(Collectors.toList())); // Adding Meetings near user
+        log.info("And now after hunting meetings, have {} entries", objectLocationSet.size());
+
         objectLocationSet.addAll(liveWireAlertBroker.fetchAlertsNearUser(userUid, location, radiusMetres, type)
                 .stream().map(al -> convertLiveWireAlert(al, user)).collect(Collectors.toList()));
 
         return ResponseEntity.ok(new ArrayList<>(objectLocationSet));
     }
 
-    @RequestMapping(value = "/all/groups/{userUid}", method = RequestMethod.GET)
+    @RequestMapping(value = "/all/groups", method = RequestMethod.GET)
     @ApiOperation(value = "All groups near user", notes = "Fetch all groups near to the user, both those they belong to" +
             " and those they don't")
-    public ResponseEntity<List<ObjectLocation>> fetchGroupsNearUser(@PathVariable String userUid,
+    public ResponseEntity<List<ObjectLocation>> fetchGroupsNearUser(HttpServletRequest request,
                                                                     @RequestParam double longitude,
                                                                     @RequestParam double latitude,
                                                                     @RequestParam int radiusMetres,
                                                                     @RequestParam(required = false) String filterTerm){
         GeoLocation location = new GeoLocation(latitude,longitude);
-        return ResponseEntity.ok(objectLocationBroker.fetchGroupsNearby(userUid,location,radiusMetres,filterTerm,
+        return ResponseEntity.ok(geoLocationBroker.fetchGroupsNearby(getUserIdFromRequest(request),location,radiusMetres,filterTerm,
                 GeographicSearchType.PUBLIC));
     }
 
-    @RequestMapping(value = "/all/alerts/{userUid}", method = RequestMethod.GET)
+    @RequestMapping(value = "/all/alerts", method = RequestMethod.GET)
     @ApiOperation(value = "All public alerts near user", notes = "Fetch all public alerts near to the user")
-    public ResponseEntity<List<LiveWireAlertDTO>> getAlertsNearUser(@PathVariable String userUid,
+    public ResponseEntity<List<LiveWireAlertDTO>> getAlertsNearUser(HttpServletRequest request,
                                                                     @RequestParam double longitude,
                                                                     @RequestParam double latitude,
                                                                     @RequestParam int radiusMetres,
@@ -113,7 +124,7 @@ public class AroundMeRestController {
         GeoLocation location = new GeoLocation(latitude,longitude);
         GeographicSearchType type = searchType == null ? GeographicSearchType.PUBLIC : searchType;
         log.info("searching for alerts near user at location : {}", location);
-        List<LiveWireAlert> liveWireAlerts = liveWireAlertBroker.fetchAlertsNearUser(userUid,location,
+        List<LiveWireAlert> liveWireAlerts = liveWireAlertBroker.fetchAlertsNearUser(getUserIdFromRequest(request),location,
                 radiusMetres, type);
         log.info("found alerts ? {}, look like : {}", !liveWireAlerts.isEmpty(), liveWireAlerts);
         return ResponseEntity.ok(liveWireAlerts.stream()

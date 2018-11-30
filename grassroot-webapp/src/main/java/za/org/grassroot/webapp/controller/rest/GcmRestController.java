@@ -1,14 +1,12 @@
 package za.org.grassroot.webapp.controller.rest;
 
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 import za.org.grassroot.core.domain.User;
-import za.org.grassroot.core.enums.UserMessagingPreference;
-import za.org.grassroot.integration.messaging.JwtService;
+import za.org.grassroot.core.enums.DeliveryRoute;
+import za.org.grassroot.integration.authentication.JwtService;
 import za.org.grassroot.services.exception.NoSuchProfileException;
 import za.org.grassroot.services.user.GcmRegistrationBroker;
 import za.org.grassroot.services.user.UserManagementService;
@@ -26,8 +24,6 @@ import javax.servlet.http.HttpServletRequest;
 @RequestMapping(value = "/api/gcm")
 public class GcmRestController extends BaseRestController {
 
-    private static final Logger logger = LoggerFactory.getLogger(GcmRestController.class);
-
     private final UserManagementService userManagementService;
     private final GcmRegistrationBroker gcmRegistrationBroker;
 
@@ -44,7 +40,7 @@ public class GcmRestController extends BaseRestController {
         User user = getUserFromRequest(request);
         if (user != null) {
             gcmRegistrationBroker.registerUser(user, gcmToken);
-            userManagementService.setMessagingPreference(user.getUid(), UserMessagingPreference.ANDROID_APP);
+            userManagementService.setMessagingPreference(user.getUid(), DeliveryRoute.ANDROID_APP);
             return new ResponseEntity<>(Boolean.TRUE, HttpStatus.OK);
         }
         return new ResponseEntity<>(Boolean.FALSE, HttpStatus.OK);
@@ -54,7 +50,7 @@ public class GcmRestController extends BaseRestController {
     public ResponseEntity<ResponseWrapper> deRegister(@PathVariable("phoneNumber") String phoneNumber, @PathVariable("code") String code)
             throws NoSuchProfileException{
         User user = userManagementService.findByInputNumber(phoneNumber);
-        userManagementService.setMessagingPreference(user.getUid(), UserMessagingPreference.SMS);
+        userManagementService.setMessagingPreference(user.getUid(), DeliveryRoute.SMS);
         return RestUtil.messageOkayResponse(RestMessage.DEREGISTERED_FOR_PUSH);
     }
 

@@ -1,18 +1,22 @@
 package za.org.grassroot.core.repository;
 
+import lombok.extern.slf4j.Slf4j;
 import org.junit.Test;
 import org.junit.runner.RunWith;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.test.autoconfigure.orm.jpa.DataJpaTest;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
-import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.ContextConfiguration;
 import org.springframework.test.context.junit4.SpringRunner;
 import za.org.grassroot.TestContextConfiguration;
-import za.org.grassroot.core.GrassrootApplicationProfiles;
-import za.org.grassroot.core.domain.*;
+import za.org.grassroot.core.domain.BaseRoles;
+import za.org.grassroot.core.domain.Permission;
+import za.org.grassroot.core.domain.User;
+import za.org.grassroot.core.domain.group.Group;
+import za.org.grassroot.core.domain.group.GroupJoinMethod;
+import za.org.grassroot.core.domain.group.GroupLog;
+import za.org.grassroot.core.domain.group.Membership;
 import za.org.grassroot.core.domain.task.Event;
 import za.org.grassroot.core.domain.task.MeetingBuilder;
 import za.org.grassroot.core.domain.task.Todo;
@@ -20,30 +24,26 @@ import za.org.grassroot.core.domain.task.TodoType;
 import za.org.grassroot.core.enums.GroupDefaultImage;
 import za.org.grassroot.core.enums.GroupLogType;
 
-import javax.transaction.Transactional;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
 import java.util.Arrays;
 import java.util.List;
+import java.util.Optional;
 import java.util.Random;
 import java.util.function.Predicate;
 
 import static org.hamcrest.CoreMatchers.is;
 import static org.hamcrest.CoreMatchers.nullValue;
 import static org.junit.Assert.*;
-import static org.springframework.data.jpa.domain.Specifications.where;
+import static org.springframework.data.jpa.domain.Specification.where;
 import static za.org.grassroot.core.specifications.GroupSpecifications.*;
 
 /**
  * @author Lesetse Kimwaga
  */
-@RunWith(SpringRunner.class)
+@Slf4j @RunWith(SpringRunner.class) @DataJpaTest
 @ContextConfiguration(classes = TestContextConfiguration.class)
-@Transactional
-@ActiveProfiles(GrassrootApplicationProfiles.INMEMORY)
 public class GroupRepositoryTest {
-
-    private static final Logger log = LoggerFactory.getLogger(GroupRepositoryTest.class);
 
     @Autowired
     private GroupRepository groupRepository;
@@ -63,7 +63,7 @@ public class GroupRepositoryTest {
     @Test
     public void shouldSaveUpComingEvents() {
 
-        User user1 = userRepository.save(new User("3456"));
+        User user1 = userRepository.save(new User("3456", null, null));
         Group group1 = groupRepository.save(new Group("Test Group", user1));
         Event newEvent = eventRepository.save(new MeetingBuilder().setName("new Meeting").setStartDateTime(Instant.now().plus(1L, ChronoUnit.DAYS)).setUser(user1).setParent(group1).setEventLocation("limpopo").createMeeting());
 
@@ -92,7 +92,7 @@ public class GroupRepositoryTest {
 
     @Test
     public void shouldSaveTodoReminder() {
-        User userToCreate = userRepository.save(new User("3456"));
+        User userToCreate = userRepository.save(new User("3456", null, null));
         Group groupToCreate = groupRepository.save(new Group("Test Group", userToCreate));
         Todo newTask = todoRepository.save(new Todo(userToCreate, groupToCreate, TodoType.ACTION_REQUIRED,
                 "discuss way forward", Instant.now().plus(1, ChronoUnit.DAYS)));
@@ -122,7 +122,7 @@ public class GroupRepositoryTest {
 
     @Test
     public void shouldSaveDefaultImage() {
-        User userToCreate = userRepository.save(new User("12345"));
+        User userToCreate = userRepository.save(new User("12345", null, null));
         Group groupToCreate = groupRepository.save(new Group("Test Group", userToCreate));
 
         assertThat(groupRepository.count(), is(1L));
@@ -139,34 +139,34 @@ public class GroupRepositoryTest {
     @Test
     public void ShouldSaveImageUrl() {
 
-        User userToCreate = userRepository.save(new User("12345"));
+        User userToCreate = userRepository.save(new User("12345", null, null));
         Group groupToCreate = groupRepository.save(new Group("Test Group", userToCreate));
         assertThat(groupRepository.count(), is(1L));
         assertNotNull(groupToCreate);
         groupToCreate.setImageUrl("http");
         assertTrue(groupToCreate.getImageUrl().equals("http"));
-        Group groupFromDb = groupRepository.findOne(where(hasImageUrl("http")));
+        Group groupFromDb = groupRepository.findOne(where(hasImageUrl("http"))).get();
         assertNotNull(groupFromDb);
         assertTrue(groupToCreate.getImageUrl().equals("http"));
     }
 
     @Test
-    public void shouldAddRole() throws Exception {
+    public void shouldAddRole() {
 
         assertThat(groupRepository.count(), is(0L));
-        User userRole = new User("56789");
+        User userRole = new User("56789", null, null);
         userRepository.save(userRole);
 
-        User userRole1 = new User("56780");
+        User userRole1 = new User("56780", null, null);
         userRepository.save(userRole1);
 
-        User userRole2 = new User("56788");
+        User userRole2 = new User("56788", null, null);
         userRepository.save(userRole2);
 
         Group groupToCreate = new Group("TestGroup", userRole);
-        groupToCreate.addMember(userRole, BaseRoles.ROLE_COMMITTEE_MEMBER, GroupJoinMethod.ADDED_BY_OTHER_MEMBER);
-        groupToCreate.addMember(userRole1, BaseRoles.ROLE_ORDINARY_MEMBER, GroupJoinMethod.ADDED_BY_OTHER_MEMBER);
-        groupToCreate.addMember(userRole2, BaseRoles.ROLE_GROUP_ORGANIZER, GroupJoinMethod.ADDED_BY_OTHER_MEMBER);
+        groupToCreate.addMember(userRole, BaseRoles.ROLE_COMMITTEE_MEMBER, GroupJoinMethod.ADDED_BY_OTHER_MEMBER, null);
+        groupToCreate.addMember(userRole1, BaseRoles.ROLE_ORDINARY_MEMBER, GroupJoinMethod.ADDED_BY_OTHER_MEMBER, null);
+        groupToCreate.addMember(userRole2, BaseRoles.ROLE_GROUP_ORGANIZER, GroupJoinMethod.ADDED_BY_OTHER_MEMBER, null);
         groupRepository.save(groupToCreate);
 
         assertThat(groupRepository.count(), is(1L));
@@ -189,20 +189,20 @@ public class GroupRepositoryTest {
     }
 
     @Test
-    public void shouldAddMembers() throws Exception {
+    public void shouldAddMembers() {
 
         assertThat(groupRepository.count(), is(0L));
 
-        User userAdd = new User("56789");
+        User userAdd = new User("56789", null, null);
         userRepository.save(userAdd);
 
-        User userAdd1 = new User("56788");
+        User userAdd1 = new User("56788", null, null);
         userRepository.save(userAdd1);
 
         List<User> usersToAdd = Arrays.asList(userAdd, userAdd1);
 
         Group groupToAdd = new Group("TestGroup", userAdd);
-        groupToAdd.addMembers(usersToAdd, BaseRoles.ROLE_ORDINARY_MEMBER, GroupJoinMethod.ADDED_BY_OTHER_MEMBER);
+        groupToAdd.addMembers(usersToAdd, BaseRoles.ROLE_ORDINARY_MEMBER, GroupJoinMethod.ADDED_BY_OTHER_MEMBER, null);
         groupRepository.save(groupToAdd);
 
         assertThat(groupRepository.count(), is(1L));
@@ -219,19 +219,19 @@ public class GroupRepositoryTest {
     }
 
     @Test
-    public  void shouldCollectGroupMembers() throws Exception {
+    public  void shouldCollectGroupMembers() {
         assertThat(groupRepository.count(),is(0L));
 
-        User userToRetrieve = new User("56789");
+        User userToRetrieve = new User("56789", null, null);
         userRepository.save(userToRetrieve);
 
-        User userToRetrieve1 = new User("45678");
+        User userToRetrieve1 = new User("45678", null, null);
         userRepository.save(userToRetrieve1);
 
         List<User> usersToCollect = Arrays.asList(userToRetrieve, userToRetrieve1);
 
         Group groupToCollect = new Group("TestGroup",userToRetrieve);
-        groupToCollect.addMembers(usersToCollect, BaseRoles.ROLE_ORDINARY_MEMBER, GroupJoinMethod.ADDED_BY_OTHER_MEMBER);
+        groupToCollect.addMembers(usersToCollect, BaseRoles.ROLE_ORDINARY_MEMBER, GroupJoinMethod.ADDED_BY_OTHER_MEMBER, null);
         groupRepository.save(groupToCollect);
 
         assertThat(groupRepository.count(),is(1L));
@@ -251,18 +251,18 @@ public class GroupRepositoryTest {
     }
 
     @Test
-    public void removeMemberships() throws Exception {
+    public void removeMemberships() {
         assertThat(groupRepository.count(),is(0L));
 
-        User userToRemove = new User("56789");
+        User userToRemove = new User("56789", null, null);
         userRepository.save(userToRemove);
 
-        User userToRemove1 = new User("56788");
+        User userToRemove1 = new User("56788", null, null);
         userRepository.save(userToRemove1);
         List<User> userNumber = Arrays.asList(userToRemove,userToRemove1);
 
         Group groupToCreate = new Group("Test Group",userToRemove);
-        groupToCreate.addMembers(userNumber, BaseRoles.ROLE_ORDINARY_MEMBER, GroupJoinMethod.ADDED_BY_OTHER_MEMBER);
+        groupToCreate.addMembers(userNumber, BaseRoles.ROLE_ORDINARY_MEMBER, GroupJoinMethod.ADDED_BY_OTHER_MEMBER, null);
         groupRepository.save(groupToCreate);
         assertThat(groupRepository.count(),is(1L));
 
@@ -272,7 +272,7 @@ public class GroupRepositoryTest {
         groupFromDb.removeMember(userToRemove1);
         groupRepository.save(groupFromDb);
 
-        Group groupFromDb2 = groupRepository.findOne(groupFromDb.getId());
+        Group groupFromDb2 = groupRepository.findById(groupFromDb.getId()).get();
         assertNotNull(groupFromDb2);
         assertTrue(groupFromDb2.getMembers().isEmpty());
         assertThat(groupFromDb2.getMembers().size(),is(0));
@@ -281,7 +281,7 @@ public class GroupRepositoryTest {
     @Test
     public void shouldAddChildGroup() throws Exception {
         assertThat(groupRepository.count(),is(0L));
-        User userToCreate = new User("56789");
+        User userToCreate = new User("56789", null, null);
         userRepository.save(userToCreate);
         Group groupToAddParent = new Group("TestGroup",userToCreate);
         groupRepository.save(groupToAddParent);
@@ -309,10 +309,10 @@ public class GroupRepositoryTest {
     }
 
     @Test
-    public void shouldBeDiscoverable() throws  Exception {
+    public void shouldBeDiscoverable() {
 
        assertThat(groupRepository.count(),is(0L));
-       User userToDiscover = new User("56789");
+       User userToDiscover = new User("56789", null, null);
        userRepository.save(userToDiscover);
        Group groupToDiscover = new Group("TestGroup",userToDiscover);
        groupRepository.save(groupToDiscover);
@@ -334,9 +334,9 @@ public class GroupRepositoryTest {
 
 
     @Test
-    public void shouldSaveDefaultLanguage() throws Exception{
+    public void shouldSaveDefaultLanguage() {
         assertThat(groupRepository.count(),is(0L));
-        User userToCreate = new User("56789");
+        User userToCreate = new User("56789", null, null);
         userRepository.save(userToCreate);
 
         Group groupDefaultLanguage = new Group("TestGroup",userToCreate);
@@ -350,10 +350,10 @@ public class GroupRepositoryTest {
 
 
     @Test
-    public void shouldSaveGroupReminder() throws  Exception {
+    public void shouldSaveGroupReminder() {
         assertThat(groupRepository.count(),is(0L));
 
-        User userToCreate = new User("56789");
+        User userToCreate = new User("56789", null, null);
         userRepository.save(userToCreate);
 
         Group groupToValidate = new Group("Test",userToCreate);
@@ -372,8 +372,8 @@ public class GroupRepositoryTest {
     }
 
     @Test
-    public void shouldSaveGroupDescription() throws  Exception {
-        User userToCreate = userRepository.save(new User("56789"));
+    public void shouldSaveGroupDescription() {
+        User userToCreate = userRepository.save(new User("56789", null, null));
         Group testGroup = groupRepository.save(new Group("testGroup",userToCreate));
 
         assertThat(groupRepository.count(),is(1L));
@@ -391,7 +391,7 @@ public class GroupRepositoryTest {
     @Test
     public void shouldSaveChildEvents() {
 
-        User newUser = userRepository.save(new User("12345"));
+        User newUser = userRepository.save(new User("12345", null, null));
         Group testGroup = groupRepository.save(new Group("testGroup", newUser));
         Event newEvent = eventRepository.save(new MeetingBuilder().setName("test meeting").setStartDateTime(Instant.now().plus(1L, ChronoUnit.DAYS)).setUser(newUser).setParent(testGroup).setEventLocation("somewhere in soweto").createMeeting());
 
@@ -419,7 +419,7 @@ public class GroupRepositoryTest {
     @Test
     public void shouldAddDescendantEvents() {
 
-        User userToCreate = userRepository.save(new User("56789"));
+        User userToCreate = userRepository.save(new User("56789", null, null));
         Group testGroup = groupRepository.save(new Group("testGroup",userToCreate));
         Event createEvent = eventRepository.save(new MeetingBuilder().setName("new Event").setStartDateTime(Instant.now().plus(
                 1L, ChronoUnit.DAYS)).setUser(userToCreate).setParent(testGroup).setEventLocation("limpopo").createMeeting());
@@ -447,8 +447,8 @@ public class GroupRepositoryTest {
     }
 
     @Test
-    public void shouldSaveJoinApprove() throws Exception {
-        User newUser = userRepository.save(new User("56789"));
+    public void shouldSaveJoinApprove() {
+        User newUser = userRepository.save(new User("56789", null, null));
         Group newGroup =groupRepository.save(new Group("Test Group",newUser));
 
         assertThat(groupRepository.count(),is(1L));
@@ -462,17 +462,17 @@ public class GroupRepositoryTest {
 
     }
     @Test
-    public void shouldSaveAndRetrieveGroupData() throws Exception {
+    public void shouldSaveAndRetrieveGroupData() {
 
         assertThat(groupRepository.count(), is(0L));
 
-        User userToDoTests = new User("56789");
+        User userToDoTests = new User("56789", null, null);
         userRepository.save(userToDoTests);
 
         Group groupToCreate = new Group("TestGroup", userToDoTests);
         groupRepository.save(groupToCreate);
 
-        assertThat(groupRepository.count(), is(1l));
+        assertThat(groupRepository.count(), is(1L));
         Group groupFromDb = groupRepository.findAll().iterator().next();
         assertNotNull(groupFromDb.getId());
         assertNotNull(groupFromDb.getCreatedDateTime());
@@ -480,11 +480,11 @@ public class GroupRepositoryTest {
         assertThat(groupFromDb.getCreatedByUser().getPhoneNumber(), is("56789"));
     }
     @Test
-    public void shouldSaveWithAddedMember() throws Exception {
+    public void shouldSaveWithAddedMember() {
         assertThat(groupRepository.count(), is(0L));
-        User userForTest = userRepository.save(new User("0814441111"));
+        User userForTest = userRepository.save(new User("0814441111", null, null));
         Group groupToCreate = groupRepository.save(new Group("testGroup", userForTest));
-        groupToCreate.addMember(userForTest, BaseRoles.ROLE_ORDINARY_MEMBER, GroupJoinMethod.ADDED_BY_OTHER_MEMBER);
+        groupToCreate.addMember(userForTest, BaseRoles.ROLE_ORDINARY_MEMBER, GroupJoinMethod.ADDED_BY_OTHER_MEMBER, null);
         groupToCreate = groupRepository.save(groupToCreate);
         assertThat(groupRepository.count(), is(1L));
         assertNotNull(groupToCreate);
@@ -493,9 +493,9 @@ public class GroupRepositoryTest {
     }
 
     @Test
-    public void shouldSaveAndFindByCreatedUser() throws Exception {
+    public void shouldSaveAndFindByCreatedUser() {
 
-        User userToDoTests = new User("100001");
+        User userToDoTests = new User("100001", null, null);
         userRepository.save(userToDoTests);
 
         Group groupToCreate = new Group("TestGroup", userToDoTests);
@@ -509,9 +509,9 @@ public class GroupRepositoryTest {
     }
 
     @Test
-    public void shouldFindLastCreatedGroupForUser() throws Exception {
+    public void shouldFindLastCreatedGroupForUser() {
 
-        User userToDoTests = new User("100002");
+        User userToDoTests = new User("100002", null, null);
         userRepository.save(userToDoTests);
 
         Group group1 = new Group("TestGroup1", userToDoTests);
@@ -526,7 +526,7 @@ public class GroupRepositoryTest {
 
     @Test
     public void shouldSaveParentRelationship() {
-        User user = userRepository.save(new User("1111111111"));
+        User user = userRepository.save(new User("1111111111", null, null));
         Group ga = groupRepository.save(new Group("ga", user));
         Group ga1 = groupRepository.save(new Group("ga1", user, ga));
         assertEquals(ga.getId(), ga1.getParent().getId());
@@ -535,7 +535,7 @@ public class GroupRepositoryTest {
 
     @Test
     public void shouldReturnLevel1ChildrenByRepositoryQuery() {
-        User user = userRepository.save(new User("2222222222"));
+        User user = userRepository.save(new User("2222222222", null, null));
         Group gb = groupRepository.save(new Group("gb", user));
         Group gb1 = groupRepository.save(new Group("gb1", user, gb));
         Group gb2 = groupRepository.save(new Group("gb2", user, gb));
@@ -546,16 +546,16 @@ public class GroupRepositoryTest {
 
     @Test
     public void shouldReturnByEntityGet() {
-        User user = userRepository.save(new User("3333333330"));
+        User user = userRepository.save(new User("3333333330", null, null));
         Group gc = groupRepository.save(new Group("gc", user));
         Group gc1 = groupRepository.save(new Group("gc1", user, gc));
         Group gc2 = groupRepository.save(new Group("gc2", user, gc));
         Group gc1a = groupRepository.save(new Group("gc1a", user, gc1));
         Group gc1b = groupRepository.save(new Group("gc1b", user, gc1));
 
-        Group gcUpdated = groupRepository.findOne(gc.getId());
-        Group gc1Updated = groupRepository.findOne(gc1.getId());
-        Group gc2Updated = groupRepository.findOne(gc2.getId());
+        Group gcUpdated = groupRepository.findById(gc.getId()).get();
+        Group gc1Updated = groupRepository.findById(gc1.getId()).get();
+        Group gc2Updated = groupRepository.findById(gc2.getId()).get();
 
         assertNotNull(gcUpdated);
         assertNotNull(gcUpdated.getDirectChildren());
@@ -576,22 +576,22 @@ public class GroupRepositoryTest {
 
     @Test
     public void shouldCreateAndUseToken() {
-        User user1 = userRepository.save(new User("3331118888"));
+        User user1 = userRepository.save(new User("3331118888", null, null));
         Group group = groupRepository.save(new Group("token", user1));
         String realToken = genToken();
         Integer fakeToken = Integer.parseInt(realToken) - 10;
         group.setGroupTokenCode(realToken);
         groupRepository.save(group);
-        Group groupFromDb1 = groupRepository.findOne(hasJoinCode(String.valueOf(realToken)));
-        Group groupFromDb2 = groupRepository.findOne(hasJoinCode(String.valueOf(fakeToken)));
-        assertNotNull(groupFromDb1);
-        assertNull(groupFromDb2);
-        assertEquals(groupFromDb1, group);
+        Optional<Group> groupFromDb1 = groupRepository.findOne(hasJoinCode(String.valueOf(realToken)));
+        Optional<Group> groupFromDb2 = groupRepository.findOne(hasJoinCode(String.valueOf(fakeToken)));
+        assertTrue(groupFromDb1.isPresent());
+        assertFalse(groupFromDb2.isPresent());
+        assertEquals(groupFromDb1.get(), group);
     }
 
     @Test
     public void shouldUseAndExtendToken() {
-        User user = userRepository.save(new User("3335551111"));
+        User user = userRepository.save(new User("3335551111", null, null));
         Group group = groupRepository.save(new Group("tg", user));
         String token = genToken();
         Instant testDate1 = Instant.now().plus(12L, ChronoUnit.HOURS);
@@ -601,22 +601,22 @@ public class GroupRepositoryTest {
         group.setGroupTokenCode(token);
         group.setTokenExpiryDateTime(testDate2);
         groupRepository.save(group);
-        Group group1 = groupRepository.findOne(where(hasJoinCode(token)).and(joinCodeExpiresAfter(testDate1)));
-        Group group2 = groupRepository.findOne(where(hasJoinCode(token)).and(joinCodeExpiresAfter(testDate3)));
-        assertNotNull(group1);
-        assertEquals(group1, group);
-        assertNull(group2);
+        Optional<Group> group1 = groupRepository.findOne(where(hasJoinCode(token)).and(joinCodeExpiresAfter(testDate1)));
+        Optional<Group> group2 = groupRepository.findOne(where(hasJoinCode(token)).and(joinCodeExpiresAfter(testDate3)));
+        assertTrue(group1.isPresent());
+        assertEquals(group1.get(), group);
+        assertFalse(group2.isPresent());
 
         group.setTokenExpiryDateTime(testDate3);
         groupRepository.save(group);
-        Group group3 = groupRepository.findOne(where(hasJoinCode(token)).and(joinCodeExpiresAfter(testDate2)));
-        assertNotNull(group3);
-        assertEquals(group3, group);
+        Optional<Group> group3 = groupRepository.findOne(where(hasJoinCode(token)).and(joinCodeExpiresAfter(testDate2)));
+        assertTrue(group3.isPresent());
+        assertEquals(group3.get(), group);
     }
 
     @Test
     public void shouldCloseToken() {
-        User user = userRepository.save(new User("3335550000"));
+        User user = userRepository.save(new User("3335550000", null, null));
         Group group = groupRepository.save(new Group("tg", user));
         String token = genToken();
         Instant testDate1 = Instant.now().plus(12L, ChronoUnit.HOURS);
@@ -625,20 +625,20 @@ public class GroupRepositoryTest {
         group.setGroupTokenCode(token);
         group.setTokenExpiryDateTime(testDate2);
         groupRepository.save(group);
-        Group group1 = groupRepository.findOne(where(hasJoinCode(token)).and(joinCodeExpiresAfter(testDate1)));
+        Group group1 = groupRepository.findOne(where(hasJoinCode(token)).and(joinCodeExpiresAfter(testDate1))).get();
         assertNotNull(group1);
         assertEquals(group, group1);
 
         group.setTokenExpiryDateTime(Instant.now());
-        Group group2 = groupRepository.findOne(where(hasJoinCode(token)).and(joinCodeExpiresAfter(testDate1)));
-        assertNull(group2);
+        Optional<Group> group2 = groupRepository.findOne(where(hasJoinCode(token)).and(joinCodeExpiresAfter(testDate1)));
+        assertFalse(group2.isPresent());
 
     }
 
     @Test
     public void shouldSetInactive() {
         assertThat(groupRepository.count(), is(0L));
-        User user = userRepository.save(new User("3331110000"));
+        User user = userRepository.save(new User("3331110000", null, null));
         Group group = groupRepository.save(new Group("gc", user));
         group.setActive(false);
         groupRepository.save(group);
@@ -651,11 +651,11 @@ public class GroupRepositoryTest {
     @Test
     public void shouldReturnOnlyActive() {
         assertThat(groupRepository.count(), is(0L));
-        User user = userRepository.save(new User("3331115555"));
+        User user = userRepository.save(new User("3331115555", null, null));
         Group group1 = new Group("gc1", user);
         Group group2 = new Group("gc2", user);
-        group1.addMember(user, BaseRoles.ROLE_ORDINARY_MEMBER, GroupJoinMethod.ADDED_BY_OTHER_MEMBER);
-        group2.addMember(user, BaseRoles.ROLE_ORDINARY_MEMBER, GroupJoinMethod.ADDED_BY_OTHER_MEMBER);
+        group1.addMember(user, BaseRoles.ROLE_ORDINARY_MEMBER, GroupJoinMethod.ADDED_BY_OTHER_MEMBER, null);
+        group2.addMember(user, BaseRoles.ROLE_ORDINARY_MEMBER, GroupJoinMethod.ADDED_BY_OTHER_MEMBER, null);
         group1 = groupRepository.save(group1);
         group2 = groupRepository.save(group2);
         group2.setActive(false);
@@ -669,24 +669,26 @@ public class GroupRepositoryTest {
     @Test
     public void shouldReturnPagesCreatedBy() {
         assertThat(groupRepository.count(), is(0L));
-        User user = userRepository.save(new User("3331110000"));
+        User user = userRepository.save(new User("3331110000", null, null));
         List<Group> testGroups = Arrays.asList(new Group("gc1", user), new Group("gc2", user), new Group("gc3", user), new Group("gc4", user));
         for (Group group : testGroups)
-            group.addMember(user, BaseRoles.ROLE_ORDINARY_MEMBER, GroupJoinMethod.ADDED_BY_OTHER_MEMBER);
-        testGroups = groupRepository.save(testGroups);
+            group.addMember(user, BaseRoles.ROLE_ORDINARY_MEMBER, GroupJoinMethod.ADDED_BY_OTHER_MEMBER, null);
+        testGroups = groupRepository.saveAll(testGroups);
         assertThat(groupRepository.count(), is(4L));
-        Page<Group> pageTest1 = groupRepository.findByCreatedByUserAndActiveTrueOrderByCreatedDateTimeDesc(user, new PageRequest(0, 3));
+        Page<Group> pageTest1 = groupRepository.findByCreatedByUserAndActiveTrueOrderByCreatedDateTimeDesc(user,
+                PageRequest.of(0, 3));
         assertThat(pageTest1.hasNext(), is(true));
         testGroups.get(0).setActive(false);
         groupRepository.save(testGroups.get(0));
-        Page<Group> activeGroups = groupRepository.findByCreatedByUserAndActiveTrueOrderByCreatedDateTimeDesc(user, new PageRequest(0,3));
+        Page<Group> activeGroups = groupRepository.findByCreatedByUserAndActiveTrueOrderByCreatedDateTimeDesc(user,
+                PageRequest.of(0,3));
         assertFalse(activeGroups.hasNext());
     }
 
     @Test
-    public void shouldHaveValidGroupToken() throws Exception {
+    public void shouldHaveValidGroupToken() {
 
-        User user = userRepository.save(new User("4879342"));
+        User user = userRepository.save(new User("4879342", null, null));
         Group groupToken = groupRepository.save(new Group(
                 "Token",user));
         assertNotNull(groupToken.getUid());
@@ -720,7 +722,7 @@ public class GroupRepositoryTest {
     @Test
     public void shouldSaveAndRetrievePaidFor() {
         assertThat(groupRepository.count(), is(0L));
-        User user = userRepository.save(new User("3331113333"));
+        User user = userRepository.save(new User("3331113333", null, null));
         Group paidGroup = new Group("paidGroup", user);
         paidGroup.setPaidFor(true);
         Group group1 = groupRepository.save(paidGroup);
@@ -732,7 +734,7 @@ public class GroupRepositoryTest {
     @Test
     public void shouldFindByPermission() {
         assertThat(groupRepository.count(), is(0L));
-        User user = userRepository.save(new User("0801113456"));
+        User user = userRepository.save(new User("0801113456", null, null));
         Group group1 = new Group("group1", user);
         Group group2 = new Group("group2", user);
 
@@ -740,8 +742,8 @@ public class GroupRepositoryTest {
         group1.getRole(BaseRoles.ROLE_GROUP_ORGANIZER).addPermission(Permission.GROUP_PERMISSION_CREATE_GROUP_MEETING);
         group2.getRole(BaseRoles.ROLE_ORDINARY_MEMBER).addPermission(Permission.GROUP_PERMISSION_CREATE_GROUP_MEETING);
 
-        group1.addMember(user, BaseRoles.ROLE_GROUP_ORGANIZER, GroupJoinMethod.ADDED_BY_OTHER_MEMBER);
-        group2.addMember(user, BaseRoles.ROLE_ORDINARY_MEMBER, GroupJoinMethod.ADDED_BY_OTHER_MEMBER);
+        group1.addMember(user, BaseRoles.ROLE_GROUP_ORGANIZER, GroupJoinMethod.ADDED_BY_OTHER_MEMBER, null);
+        group2.addMember(user, BaseRoles.ROLE_ORDINARY_MEMBER, GroupJoinMethod.ADDED_BY_OTHER_MEMBER, null);
 
         groupRepository.save(group1);
         groupRepository.save(group2);
@@ -775,12 +777,12 @@ public class GroupRepositoryTest {
     @Test
     public void shouldFindWhereGroupJoinUsed() {
         assertThat(groupRepository.count(), is(0L));
-        User user = userRepository.save(new User("0801110000"));
-        User user2 = userRepository.save(new User("0801110001"));
+        User user = userRepository.save(new User("0801110000", null, null));
+        User user2 = userRepository.save(new User("0801110001", null, null));
         Group tg1 = groupRepository.save(new Group("tg1", user));
         Group tg2 = groupRepository.save(new Group("tg2", user));
         groupLogRepository.save(new GroupLog(tg1, user2, GroupLogType.GROUP_MEMBER_ADDED_VIA_JOIN_CODE,
-                                             0L, "test"));
+                                             user2, null, null, "test"));
         List<Group> groups = groupRepository.findGroupsWhereJoinCodeUsedBetween(Instant.now().minus(1, ChronoUnit.MINUTES),
                                                                                 Instant.now());
         assertNotNull(groups);
@@ -791,11 +793,11 @@ public class GroupRepositoryTest {
     @Test
     public void tempTestCountSizeMembers() {
         assertThat(groupRepository.count(), is(0L));
-        User user1 = new User("56789");
-        User user2 = new User("12345");
+        User user1 = new User("56789", null, null);
+        User user2 = new User("12345", null, null);
         Group group1 = new Group("test", user1);
-        group1.addMember(user1, BaseRoles.ROLE_ORDINARY_MEMBER, GroupJoinMethod.ADDED_BY_OTHER_MEMBER);
-        group1.addMember(user2, BaseRoles.ROLE_ORDINARY_MEMBER, GroupJoinMethod.ADDED_BY_OTHER_MEMBER);
+        group1.addMember(user1, BaseRoles.ROLE_ORDINARY_MEMBER, GroupJoinMethod.ADDED_BY_OTHER_MEMBER, null);
+        group1.addMember(user2, BaseRoles.ROLE_ORDINARY_MEMBER, GroupJoinMethod.ADDED_BY_OTHER_MEMBER, null);
         groupRepository.save(group1);
         assertThat(groupRepository.count(), is(1L));
 

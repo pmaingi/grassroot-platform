@@ -4,12 +4,11 @@ import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.JpaSpecificationExecutor;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
-import za.org.grassroot.core.domain.task.Event;
-import za.org.grassroot.core.domain.Group;
 import za.org.grassroot.core.domain.User;
+import za.org.grassroot.core.domain.group.Group;
 import za.org.grassroot.core.domain.notification.EventNotification;
+import za.org.grassroot.core.domain.task.Event;
 
-import java.util.Collection;
 import java.util.List;
 import java.util.Set;
 
@@ -19,11 +18,15 @@ public interface UserRepository extends JpaRepository<User, Long>, JpaSpecificat
     Since phoneNumbers are unique, replacing the prior method, which returned a list of Users, with this, for efficiency
     Note: can now no longer rely on NoSuchElement exceptions to catch 'no such user', probably should now do ourselves
      */
-    User findByPhoneNumber(String phoneNumber);
+    User findByPhoneNumberAndPhoneNumberNotNull(String phoneNumber);
+
+    User findByEmailAddressAndEmailAddressNotNull(String emailAddress);
 
     User findOneByUid(String uid);
 
     List<User> findByUidIn(Set<String> uids);
+
+    List<User> findByWhatsAppOptedInTrue();
 
     /*
     Used in admin pages to find users who can then be designated, modified, etc. Probably want a better search method
@@ -62,6 +65,9 @@ public interface UserRepository extends JpaRepository<User, Long>, JpaSpecificat
     @Query("SELECT CASE WHEN COUNT(u) > 0 THEN 'true' ELSE 'false' END FROM User u WHERE u.phoneNumber = ?1")
     Boolean existsByPhoneNumber(String phoneNumber);
 
+    @Query("SELECT CASE WHEN COUNT(u) > 0 then 'true' ELSE 'false' END FROM User u where lower(u.emailAddress) = lower(?1)")
+    Boolean existsByEmail(String emailAddress);
+
     @Query("select u from User u, EventLog el, Event e where e = ?1 and el.event = e " +
             "and u = el.user and el.eventLogType = za.org.grassroot.core.enums.EventLogType.RSVP and el.response = 'YES'")
     List<User> findUsersThatRSVPYesForEvent(Event event);
@@ -78,6 +84,12 @@ public interface UserRepository extends JpaRepository<User, Long>, JpaSpecificat
             "where e = ?1 and type(n) = ?2")
     List<User> findNotificationTargetsForEvent(Event event, Class<? extends EventNotification> notificationClass);
 
-    List<User> findByPhoneNumberIn(Collection<String> phoneNumbers);
+    @Query("select lower(u.emailAddress) from User u where u.enabled = true")
+    Set<String> fetchUsedEmailAddresses();
+
+    @Query("select u.phoneNumber from User u where u.enabled = true")
+    Set<String> fetchUserPhoneNumbers();
+
+    Set<User> findByEvents(Event event);
 
 }

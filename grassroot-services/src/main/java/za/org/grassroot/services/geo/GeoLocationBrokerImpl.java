@@ -3,15 +3,14 @@ package za.org.grassroot.services.geo;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.data.jpa.domain.Specifications;
+import org.springframework.data.jpa.domain.Specification;
 import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
-import org.springframework.web.client.RestTemplate;
-import za.org.grassroot.core.domain.Group;
 import za.org.grassroot.core.domain.JpaEntityType;
 import za.org.grassroot.core.domain.User;
 import za.org.grassroot.core.domain.geo.*;
+import za.org.grassroot.core.domain.group.Group;
 import za.org.grassroot.core.domain.task.Event;
 import za.org.grassroot.core.domain.task.EventLog;
 import za.org.grassroot.core.domain.task.Meeting;
@@ -21,12 +20,18 @@ import za.org.grassroot.core.enums.UserInterfaceType;
 import za.org.grassroot.core.repository.*;
 import za.org.grassroot.core.specifications.EventLogSpecifications;
 import za.org.grassroot.core.util.DateTimeUtil;
+import za.org.grassroot.graph.dto.IncomingAnnotation;
+import za.org.grassroot.integration.graph.GraphBroker;
 import za.org.grassroot.integration.location.UssdLocationServicesBroker;
 
 import javax.persistence.EntityManager;
+import javax.persistence.TypedQuery;
+import java.security.InvalidParameterException;
 import java.time.Instant;
 import java.time.LocalDate;
+import java.time.temporal.ChronoUnit;
 import java.util.*;
+import java.util.function.Predicate;
 import java.util.stream.Collectors;
 
 import static za.org.grassroot.core.enums.LocationSource.convertFromInterface;
@@ -35,40 +40,46 @@ import static za.org.grassroot.core.enums.LocationSource.convertFromInterface;
 public class GeoLocationBrokerImpl implements GeoLocationBroker {
 	private final Logger logger = LoggerFactory.getLogger(GeoLocationBrokerImpl.class);
 
-	@Autowired
-	private UserLocationLogRepository userLocationLogRepository;
+	private final static int PRIVATE_LEVEL = -1;
+	private final static int PUBLIC_LEVEL = 1;
 
-	@Autowired
-	private PreviousPeriodUserLocationRepository previousPeriodUserLocationRepository;
+	private final UserLocationLogRepository userLocationLogRepository;
+	private final PreviousPeriodUserLocationRepository previousPeriodUserLocationRepository;
+	private final UserRepository userRepository;
+	private final GroupRepository groupRepository;
+	private final GroupLocationRepository groupLocationRepository;
+	private final EventRepository eventRepository;
+	private final EventLogRepository eventLogRepository;
+	private final TaskLocationRepository taskLocationRepository;
+	private final EntityManager entityManager;
 
-	@Autowired
-	private UserRepository userRepository;
+	private UssdLocationServicesBroker ussdLocationServicesBroker;
+	private GraphBroker graphBroker;
 
-	@Autowired
-	private GroupRepository groupRepository;
+    @Autowired
+    public GeoLocationBrokerImpl(UserLocationLogRepository userLocationLogRepository, PreviousPeriodUserLocationRepository previousPeriodUserLocationRepository, UserRepository userRepository, GroupRepository groupRepository, GroupLocationRepository groupLocationRepository, EventRepository eventRepository, EventLogRepository eventLogRepository, TaskLocationRepository taskLocationRepository, EntityManager entityManager) {
+        this.userLocationLogRepository = userLocationLogRepository;
+        this.previousPeriodUserLocationRepository = previousPeriodUserLocationRepository;
+        this.userRepository = userRepository;
+        this.groupRepository = groupRepository;
+        this.groupLocationRepository = groupLocationRepository;
+        this.eventRepository = eventRepository;
+        this.eventLogRepository = eventLogRepository;
+        this.taskLocationRepository = taskLocationRepository;
+        this.entityManager = entityManager;
+    }
 
-	@Autowired
-	private GroupLocationRepository groupLocationRepository;
-
-	@Autowired
-	private EventRepository eventRepository;
-
-	@Autowired
-	private EventLogRepository eventLogRepository;
-
-	@Autowired
-	private MeetingLocationRepository meetingLocationRepository;
+    @Autowired(required = false)
+    public void setUssdLocationServicesBroker(UssdLocationServicesBroker ussdLocationServicesBroker) {
+        this.ussdLocationServicesBroker = ussdLocationServicesBroker;
+    }
 
 	@Autowired(required = false)
-	private UssdLocationServicesBroker ussdLocationServicesBroker;
+	public void setGraphBroker(GraphBroker graphBroker) {
+		this.graphBroker = graphBroker;
+	}
 
-	@Autowired
-	private RestTemplate restTemplate;
-
-	@Autowired
-	private EntityManager entityManager;
-
-	@Override
+    @Override
 	@Transactional
 	public void logUserLocation(String userUid, double latitude, double longitude, Instant time, UserInterfaceType interfaceType) {
 		Objects.requireNonNull(userUid);
@@ -82,26 +93,7 @@ public class GeoLocationBrokerImpl implements GeoLocationBroker {
 		userLocationLogRepository.save(userLocationLog);
 	}
 
-	/*
-	Logic sequence, for the moment (really need to overhaul most of this):
-	* (1) First, look for an address of the user, via safety broker, that has a location
-	* (2) If not, look for a stored / average user location
-	* (3) If not that, look for a group / event with a stored user location
-	* On each of the above, look for an address / address log in the vicinity, and return it
-	* Otherwise, call the geolocator, then store the address so we don't need it again in future
-	 */
-    @Override
-	@Transactional(readOnly = true)
-    public String describeUserLocation(String userUid) {
-
-		PreviousPeriodUserLocation avgLocation = fetchUserLocation(userUid);
-		if (avgLocation != null) {
-
-		}
-		return null;
-    }
-
-    @Async
+	@Async
     @Override
 	@Transactional
     public void logUserUssdPermission(String userUid, String entityToUpdateUid,
@@ -169,7 +161,7 @@ public class GeoLocationBrokerImpl implements GeoLocationBroker {
 			userLocations.add(userLocation);
 		}
 
-		previousPeriodUserLocationRepository.save(userLocations);
+		previousPeriodUserLocationRepository.saveAll(userLocations);
 	}
 
 	private Instant convertStartOfDayToSASTInstant(LocalDate date) {
@@ -197,6 +189,12 @@ public class GeoLocationBrokerImpl implements GeoLocationBroker {
 			float score = result.getEntityCount() / (float) memberUids.size();
 			GroupLocation groupLocation = new GroupLocation(group, localDate, result.getCenter(), score, LocationSource.CALCULATED);
 			groupLocationRepository.save(groupLocation);
+
+			// now update group location annotation in graph
+			Map<String, String> groupProperties = new HashMap<>();
+			groupProperties.put(IncomingAnnotation.latitude, String.valueOf(result.getCenter().getLatitude()));
+			groupProperties.put(IncomingAnnotation.longitude, String.valueOf(result.getCenter().getLongitude()));
+			graphBroker.annotateGroup(groupUid, groupProperties, null, false);
 		} else {
 			logger.debug("No member location data found for group {} for local date {}", group, localDate);
 		}
@@ -223,22 +221,21 @@ public class GeoLocationBrokerImpl implements GeoLocationBroker {
 			throw new IllegalArgumentException("Cannot calculate a location for a vote");
 		}
 
-		List<EventLog> logsWithLocation = eventLogRepository.findAll(
-				Specifications.where(EventLogSpecifications.forEvent(event))
+		List<EventLog> logsWithLocation = eventLogRepository.findAll(Specification.where(EventLogSpecifications.forEvent(event))
 				.and(EventLogSpecifications.hasLocation()));
 
-		MeetingLocation meetingLocation;
-		if (logsWithLocation != null && !logsWithLocation.isEmpty()) {
+		TaskLocation meetingLocation;
+		if (!logsWithLocation.isEmpty()) {
 			CenterCalculationResult center = calculateCenter(logsWithLocation);
 			float score = (float) 1.0; // since a related log with a GPS is best possible, but may return to this
-			meetingLocation = new MeetingLocation((Meeting) event, center.getCenter(), score,
+			meetingLocation = new TaskLocation((Meeting) event, center.getCenter(), score,
 					EventType.MEETING, LocationSource.LOGGED_MULTIPLE);
 		} else {
 			Group parent = event.getParent().getThisOrAncestorGroup();
 			GroupLocation parentLocation = fetchGroupLocationWithScoreAbove(parent.getUid(),
 					localDate, 0);
 			if (parentLocation != null) {
-				meetingLocation = new MeetingLocation((Meeting) event, parentLocation.getLocation(),
+				meetingLocation = new TaskLocation((Meeting) event, parentLocation.getLocation(),
 						parentLocation.getScore(), EventType.MEETING, LocationSource.CALCULATED);
 			} else {
 				logger.debug("No event logs or group with location data for meeting");
@@ -247,7 +244,7 @@ public class GeoLocationBrokerImpl implements GeoLocationBroker {
 		}
 
 		if (meetingLocation != null) {
-			meetingLocationRepository.save(meetingLocation);
+			taskLocationRepository.save(meetingLocation);
 		}
     }
 
@@ -257,9 +254,9 @@ public class GeoLocationBrokerImpl implements GeoLocationBroker {
 		Meeting meeting = (Meeting) eventRepository.findOneByUid(eventUid);
 		logger.info("Calculating a meeting location ...");
 		if (location != null) {
-			MeetingLocation mtgLocation = new MeetingLocation(meeting, location, (float) 1.0, EventType.MEETING,
+			TaskLocation mtgLocation = new TaskLocation(meeting, location, (float) 1.0, EventType.MEETING,
 					convertFromInterface(coordSourceInterface));
-			meetingLocationRepository.save(mtgLocation);
+			taskLocationRepository.save(mtgLocation);
 		} else {
 			LocalDate inLastMonth = LocalDate.now().minusMonths(1L);
 			Group ancestor = meeting.getAncestorGroup();
@@ -269,11 +266,6 @@ public class GeoLocationBrokerImpl implements GeoLocationBroker {
 			}
 			calculateMeetingLocationScheduled(eventUid, LocalDate.now());
 		}
-    }
-
-    @Override
-    public void calculateTodoLocationScheduled(String todoUid, LocalDate localDate) {
-
     }
 
 	@Override
@@ -352,11 +344,6 @@ public class GeoLocationBrokerImpl implements GeoLocationBroker {
 		}
 	}
 
-	@Override
-	public List<GroupLocation> fetchGroupLocationsWithScoreAbove(Set<Group> groups, LocalDate localDate, float score) {
-		return groupLocationRepository.findByGroupInAndLocalDateAndScoreGreaterThan(groups, localDate, score);
-	}
-
 
 	@Override
 	public List<Group> fetchGroupsWithRecordedAverageLocations(){
@@ -392,6 +379,174 @@ public class GeoLocationBrokerImpl implements GeoLocationBroker {
 		}
 
 		return returnList;
+	}
+
+	@Override
+	@Transactional(readOnly = true)
+	public List<ObjectLocation> fetchPublicGroupsNearbyWithLocation(GeoLocation location, Integer radiusInMetres) throws InvalidParameterException {
+		return fetchGroupsNearbyWithLocation(location, radiusInMetres, PUBLIC_LEVEL);
+	}
+
+	@Transactional(readOnly = true)
+	public List<ObjectLocation> fetchGroupsNearbyWithLocation(GeoLocation location, Integer radiusInMetres, Integer publicOrPrivate) throws InvalidParameterException {
+		logger.info("Fetching group locations, around {} ...", location);
+
+		assertRadius(radiusInMetres);
+		assertGeolocation(location);
+
+		// Mount restriction
+		String restrictionClause = "";
+		if (publicOrPrivate == null || publicOrPrivate == PUBLIC_LEVEL) {
+			restrictionClause = "g.discoverable = true AND ";
+		}
+		else if (publicOrPrivate == PRIVATE_LEVEL) {
+			restrictionClause = "g.discoverable = false AND ";
+		}
+
+		// Mount query
+		String query =
+				"SELECT NEW za.org.grassroot.core.domain.geo.ObjectLocation( " +
+						"g.uid, g.groupName, l.location.latitude, l.location.longitude, l.score, 'GROUP', g.description, g.discoverable) " +
+						"FROM GroupLocation l " +
+						"INNER JOIN l.group g " +
+						"WHERE " + restrictionClause +
+						" l.localDate <= :date " +
+						" AND l.localDate = (SELECT MAX(ll.localDate) FROM GroupLocation ll WHERE ll.group = l.group) AND " +
+						GeoLocationUtils.locationFilterSuffix("l.location");
+
+		logger.debug(query);
+
+		TypedQuery<ObjectLocation> typedQuery = entityManager.createQuery(query, ObjectLocation.class)
+				.setParameter("date", LocalDate.now());
+		GeoLocationUtils.addLocationParamsToQuery(typedQuery, location, radiusInMetres);
+
+		return typedQuery.getResultList();
+
+	}
+
+	public List<ObjectLocation> fetchMeetingLocationsNearUser(User user, GeoLocation geoLocation, Integer radiusInMetres, GeographicSearchType searchType, String searchTerm) {
+		Objects.requireNonNull(user);
+		Objects.requireNonNull(searchType);
+		assertRadius(radiusInMetres);
+
+		GeoLocation searchCentre = geoLocation == null ? fetchBestGuessUserLocation(user.getUid()) : geoLocation;
+		if (searchCentre == null) {
+			logger.info("No geo location, exiting entity search");
+			// we can't find anything, so just return blank (leave to client to work out best way to get location)
+			// should probably throw an exception here in time, but for the moment (mid clean up) it's somewhat dangerous
+			return new ArrayList<>();
+		}
+
+		final String usersOwnGroups = "m.ancestorGroup IN (SELECT mm.group FROM Membership mm WHERE mm.user = :user) AND ";
+		final String publicGroupsNotUser = "m.isPublic = true AND m.ancestorGroup NOT IN (SELECT mm.group FROM Membership mm WHERE mm.user = :user) AND ";
+
+		final String groupRestriction = GeographicSearchType.PUBLIC.equals(searchType) ? publicGroupsNotUser :
+				GeographicSearchType.PRIVATE.equals(searchType) ? usersOwnGroups : "";
+
+		logger.info("Group restrictions: {}", groupRestriction);
+
+		String strQuery =
+				"SELECT NEW za.org.grassroot.core.domain.geo.ObjectLocation(m, l) " +
+						"FROM TaskLocation l INNER JOIN l.meeting m " +
+						"WHERE " + groupRestriction + " m.eventStartDateTime >= :present AND "
+						+ GeoLocationUtils.locationFilterSuffix("l.location");
+
+		logger.info("we have a search location, it looks like: {}, and query: {}", searchCentre, strQuery);
+
+		TypedQuery<ObjectLocation> query = entityManager.createQuery(strQuery,ObjectLocation.class)
+				.setParameter("present", Instant.now());
+
+		if (!GeographicSearchType.BOTH.equals(searchType)) {
+			query.setParameter("user", user);
+		}
+
+		GeoLocationUtils.addLocationParamsToQuery(query, geoLocation, radiusInMetres);
+
+		return query.getResultList();
+	}
+
+	@Override
+	@Transactional(readOnly = true)
+	public List<ObjectLocation> fetchGroupsNearby(String userUid, GeoLocation location, Integer radiusInMetres, String filterTerm, GeographicSearchType searchType) throws InvalidParameterException {
+
+		assertGeolocation(location);
+
+		Set<ObjectLocation> objectLocationSet = new HashSet<>();
+
+		if (searchType.toInt() > PRIVATE_LEVEL) {
+			objectLocationSet.addAll(fetchPublicGroupsNearbyWithLocation(location, radiusInMetres));
+		}
+
+		logger.info("Fetching groups, after public fetch, set size = {}", objectLocationSet.size());
+
+		if (searchType.toInt() < PUBLIC_LEVEL) {
+			objectLocationSet.addAll(fetchGroupsNearbyWithLocation(location, radiusInMetres,PRIVATE_LEVEL));
+		}
+
+		logger.info("After private fetch, set size = {}", objectLocationSet.size());
+
+
+		return new ArrayList<>(objectLocationSet);
+	}
+
+	@Override
+	@Transactional(readOnly = true)
+	public GeoLocation fetchBestGuessUserLocation(String userUid) {
+		GeoLocation bestGuess = null;
+
+		Instant cutOffAge = Instant.now().minus(30, ChronoUnit.DAYS);
+		List<UserLocationLog> locationLogs = userLocationLogRepository.findByUserUidOrderByTimestampDesc(userUid);
+
+		if (!locationLogs.isEmpty()) {
+			logger.info("we have {} recent location logs", locationLogs.size());
+
+			Optional<UserLocationLog> bestMatch = locationLogs.stream()
+					.filter(ofSourceNewerThan(cutOffAge, LocationSource.LOGGED_PRECISE))
+					.findFirst();
+
+			logger.info("found a new precise log?: {}", bestMatch);
+
+			bestGuess = bestMatch.isPresent() ? bestMatch.get().getLocation() : null;
+
+			if (bestGuess == null) {
+				Optional<UserLocationLog> nextTry = locationLogs.stream()
+						.filter(ofSourceNewerThan(cutOffAge, LocationSource.LOGGED_APPROX)).findFirst();
+				bestGuess = nextTry.isPresent() ? nextTry.get().getLocation() : null;
+				logger.info("found an approx location? {}", nextTry.isPresent());
+			}
+
+			if (bestGuess == null) {
+				logger.info("found nothing, using this: {}", locationLogs.get(0));
+				bestGuess = locationLogs.get(0).getLocation();
+			}
+
+		} else {
+			logger.info("no recent location logs, going for previously calculated");
+			PreviousPeriodUserLocation avgUserLocation = previousPeriodUserLocationRepository
+					.findTopByKeyUserUidOrderByKeyLocalDateDesc(userUid);
+
+			if (avgUserLocation != null) {
+				bestGuess = avgUserLocation.getLocation();
+			}
+		}
+
+		return bestGuess;
+	}
+
+	private Predicate<UserLocationLog> ofSourceNewerThan(Instant threshold, LocationSource source) {
+		return log -> log.getTimestamp().isAfter(threshold) && log.getLocationSource().equals(source);
+	}
+
+	private void assertRadius (Integer radius) throws InvalidParameterException {
+		if (radius == null || radius <= 0) {
+			throw new InvalidParameterException("Invalid radius object.");
+		}
+	}
+
+	private void assertGeolocation (GeoLocation location) throws InvalidParameterException {
+		if (location == null || !location.isValid()) {
+			throw new InvalidParameterException("Invalid GeoLocation object.");
+		}
 	}
 
 	private LocalDate findFirstDateWithAvgLocationForUserBefore(LocalDate date, String userUid) {

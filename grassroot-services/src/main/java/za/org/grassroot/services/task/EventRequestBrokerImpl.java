@@ -8,10 +8,11 @@ import org.springframework.security.access.AccessDeniedException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
-import za.org.grassroot.core.domain.Group;
 import za.org.grassroot.core.domain.Permission;
 import za.org.grassroot.core.domain.User;
+import za.org.grassroot.core.domain.group.Group;
 import za.org.grassroot.core.domain.task.*;
+import za.org.grassroot.core.enums.UserInterfaceType;
 import za.org.grassroot.core.repository.EventRequestRepository;
 import za.org.grassroot.core.repository.GroupRepository;
 import za.org.grassroot.core.repository.UserRepository;
@@ -36,16 +37,22 @@ public class EventRequestBrokerImpl implements EventRequestBroker {
 	@Value("${grassroot.vote.option.maxlength:20}")
 	private int MAX_OPTION_LENGTH;
 
+	private final GroupRepository groupRepository;
+	private final UserRepository userRepository;
+	private final EventRequestRepository eventRequestRepository;
+	private final EventBroker eventBroker;
+	private final VoteBroker voteBroker;
+	private final PermissionBroker permissionBroker;
+
 	@Autowired
-	private GroupRepository groupRepository;
-	@Autowired
-	private UserRepository userRepository;
-	@Autowired
-	private EventRequestRepository eventRequestRepository;
-	@Autowired
-	private EventBroker eventBroker;
-	@Autowired
-	private PermissionBroker permissionBroker;
+	public EventRequestBrokerImpl(GroupRepository groupRepository, UserRepository userRepository, EventRequestRepository eventRequestRepository, EventBroker eventBroker, VoteBroker voteBroker, PermissionBroker permissionBroker) {
+		this.groupRepository = groupRepository;
+		this.userRepository = userRepository;
+		this.eventRequestRepository = eventRequestRepository;
+		this.eventBroker = eventBroker;
+		this.voteBroker = voteBroker;
+		this.permissionBroker = permissionBroker;
+	}
 
 	@Override
 	public EventRequest load(String eventRequestUid) {
@@ -102,7 +109,7 @@ public class EventRequestBrokerImpl implements EventRequestBroker {
 		Objects.requireNonNull(name);
 
 		EventRequest request = eventRequestRepository.findOneByUid(eventRequestUid);
-		String sizedName = name.length() > 40 ? name.substring(0, 40) : name;
+		String sizedName = name.length() > Event.MAX_NAME_LENGTH ? name.substring(0, Event.MAX_NAME_LENGTH) : name;
 		request.setName(sizedName);
 	}
 
@@ -217,13 +224,17 @@ public class EventRequestBrokerImpl implements EventRequestBroker {
 					.reminderType(meetingRequest.getReminderType())
 					.customReminderMinutes(meetingRequest.getCustomReminderMinutes())
 					.description(meetingRequest.getDescription())
-					.assignedMemberUids(assignedMemberUids)).getUid();
+					.assignedMemberUids(assignedMemberUids), UserInterfaceType.USSD).getUid();
 		} else {
 			VoteRequest voteRequest = (VoteRequest) request;
 			VoteContainer parent = voteRequest.getParent();
-			createdEntityUid = eventBroker.createVote(userUid, parent.getUid(), parent.getJpaEntityType(), voteRequest.getName(),
-					voteRequest.getEventDateTimeAtSAST(), voteRequest.isIncludeSubGroups(),
-					voteRequest.getDescription(), assignedMemberUids, voteRequest.getVoteOptions()).getUid();
+			VoteHelper helper = VoteHelper.builder()
+					.userUid(userUid).parentType(parent.getJpaEntityType()).parentUid(parent.getUid())
+					.name(voteRequest.getName()).eventStartDateTime(voteRequest.getEventDateTimeAtSAST()).includeSubGroups(voteRequest.isIncludeSubGroups())
+					.description(voteRequest.getDescription()).assignMemberUids(assignedMemberUids).options(voteRequest.getVoteOptions())
+					.build();
+
+			createdEntityUid = eventBroker.createVote(helper).getUid();
 		}
 
 		eventRequestRepository.delete(request);
@@ -268,7 +279,7 @@ public class EventRequestBrokerImpl implements EventRequestBroker {
 						meetingChangeRequest.getEventLocation());
         } else {
             VoteRequest voteRequest = (VoteRequest) request;
-            eventBroker.updateVote(userUid, eventUid, voteRequest.getEventDateTimeAtSAST(), voteRequest.getDescription());
+            voteBroker.updateVote(userUid, eventUid, voteRequest.getEventDateTimeAtSAST(), voteRequest.getDescription());
         }
 
         eventRequestRepository.delete(request);

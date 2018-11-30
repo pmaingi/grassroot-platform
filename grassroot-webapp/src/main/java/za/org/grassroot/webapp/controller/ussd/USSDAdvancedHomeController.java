@@ -16,8 +16,8 @@ import za.org.grassroot.core.enums.LocationSource;
 import za.org.grassroot.core.enums.UserInterfaceType;
 import za.org.grassroot.core.repository.UserLocationLogRepository;
 import za.org.grassroot.integration.location.UssdLocationServicesBroker;
+import za.org.grassroot.services.geo.GeoLocationBroker;
 import za.org.grassroot.services.geo.GeographicSearchType;
-import za.org.grassroot.services.geo.ObjectLocationBroker;
 import za.org.grassroot.services.task.EventBroker;
 import za.org.grassroot.webapp.controller.ussd.menus.USSDMenu;
 import za.org.grassroot.webapp.enums.USSDSection;
@@ -44,21 +44,24 @@ public class USSDAdvancedHomeController extends USSDBaseController {
     private static final Integer searchRadius = 5000;
     private static final USSDSection thisSection = USSDSection.HOME;
 
-    private final UssdLocationServicesBroker ussdLocationServicesBroker;
+    private UssdLocationServicesBroker ussdLocationServicesBroker;
     private final UserLocationLogRepository userLocationLogRepository; // not great, but avoiding some nasty async issues
 
-    private final ObjectLocationBroker objectLocationBroker;
+    private final GeoLocationBroker geoLocationBroker;
     private final EventBroker eventBroker;
 
     @Autowired
-    public USSDAdvancedHomeController(UssdLocationServicesBroker ussdLocationServicesBroker,
-                                      UserLocationLogRepository userLocationLogRepository,
-                                      ObjectLocationBroker objectLocationBroker,
+    public USSDAdvancedHomeController(UserLocationLogRepository userLocationLogRepository,
+                                      GeoLocationBroker geoLocationBroker,
                                       EventBroker eventBroker){
-        this.ussdLocationServicesBroker = ussdLocationServicesBroker;
         this.userLocationLogRepository = userLocationLogRepository;
-        this.objectLocationBroker = objectLocationBroker;
+        this.geoLocationBroker = geoLocationBroker;
         this.eventBroker = eventBroker;
+    }
+
+    @Autowired(required = false)
+    public void setUssdLocationServicesBroker(UssdLocationServicesBroker ussdLocationServicesBroker) {
+        this.ussdLocationServicesBroker = ussdLocationServicesBroker;
     }
 
     @RequestMapping(value = ROOT_PATH + startMenu)
@@ -67,7 +70,7 @@ public class USSDAdvancedHomeController extends USSDBaseController {
         User user = userManager.findByInputNumber(msisdn);
         USSDMenu ussdMenu = new USSDMenu(getMessage(thisSection, "more", promptKey, user));
         ussdMenu.addMenuOption(safetyMenus + startMenu, getMessage(thisSection, "more", optionsKey + "safety", user));
-        ussdMenu.addMenuOption(moreMenus + "/public/mtgs", getMessage(thisSection, "more", optionsKey + "publicmtgs", user));
+        ussdMenu.addMenuOption(moreMenus + "public/mtgs", getMessage(thisSection, "more", optionsKey + "publicmtgs", user));
         ussdMenu.addMenuOption(startMenu, getMessage(optionsKey + "back", user));
         return menuBuilder(ussdMenu);
     }
@@ -78,12 +81,12 @@ public class USSDAdvancedHomeController extends USSDBaseController {
                                              @RequestParam(required = false) Integer page,
                                              @RequestParam(required = false) boolean repeat) throws URISyntaxException {
         User user = userManager.findByInputNumber(inputNumber);
-        GeoLocation guessedLocation = objectLocationBroker.fetchBestGuessUserLocation(user.getUid());
+        GeoLocation guessedLocation = geoLocationBroker.fetchBestGuessUserLocation(user.getUid());
 
         USSDMenu ussdMenu;
 
         if (guessedLocation != null) {
-            List<ObjectLocation> listOfPublicMeetingsNearUser = objectLocationBroker
+            List<ObjectLocation> listOfPublicMeetingsNearUser = geoLocationBroker
                     .fetchMeetingLocationsNearUser(user, guessedLocation, searchRadius, GeographicSearchType.PUBLIC, null);
             log.info("Size of meetings array in home more controller= {}",listOfPublicMeetingsNearUser.size());
             ussdMenu = listOfPublicMeetingsNearUser.isEmpty() ?
@@ -120,7 +123,7 @@ public class USSDAdvancedHomeController extends USSDBaseController {
         if (tracking) {
             lookupAndStoreLocation(user.getUid());
             menu = new USSDMenu(getMessage(thisSection, "public", "track.prompt.okay", user));
-            menu.addMenuOption(moreMenus + "/public/mtgs?repeat=true", getMessage(thisSection, "public", "track.options.again", user));
+            menu.addMenuOption(moreMenus + "public/mtgs?repeat=true", getMessage(thisSection, "public", "track.options.again", user));
             addBackOption(menu, user);
         } else {
             menu = new USSDMenu(getMessage(thisSection, "public", "track.prompt.denied", user));
@@ -137,7 +140,7 @@ public class USSDAdvancedHomeController extends USSDBaseController {
         publicMeetings.stream()
                 .skip(pageNumber * PAGE_SIZE)
                 .limit(PAGE_SIZE)
-                .forEach(pm -> ussdMenu.addMenuOption(moreMenus + "/public/mtgs/details?meetingUid=" + pm.getUid(),
+                .forEach(pm -> ussdMenu.addMenuOption(moreMenus + "public/mtgs/details?meetingUid=" + pm.getUid(),
                     assembleDescription(pm)));
         if (publicMeetings.size() > (pageNumber + 1) * PAGE_SIZE) {
             ussdMenu.addMenuOption(moreMenus + "public/mtgs?page=" + (pageNumber + 1), getMessage(optionsKey + "more", user));

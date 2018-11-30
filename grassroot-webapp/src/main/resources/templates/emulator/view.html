@@ -9,7 +9,7 @@
 <div th:if="${request.options != null}">
     <div th:switch="${display}">
         <div th:case="false">
-            <form th:action="@{/emulator/ussd/view}" method="get">
+            <form th:action="@{/emulator/ussd/view/{phone}(phone=${userPhone})}" method="get">
                 <input type="hidden" name="link" th:value="${request.options[0].callback}"/>
                 <input type="text" name="request"/>
                 <input type="submit" value="Submit"/>
@@ -20,7 +20,7 @@
             <ol>
                 <th:block th:object="${request}">
                     <li th:each="option : *{options}"><a th:text="${option.value}"
-                                                         th:href="@{/emulator/ussd/view(link=${option.callback})} "></a></li>
+                                                         th:href="@{/emulator/ussd/view/{phone}(phone=${userPhone},link=${option.callback})} "></a></li>
                 </th:block>
             </ol>
         </div>
@@ -30,23 +30,30 @@
 
 </div>
 <div><form>
-    <button th:action="@{/emulator/ussd/view}" method="get">Interrupt</button>
+    <button th:action="@{/emulator/ussd/view/{phone}(phone=${userPhone})}" method="get">Interrupt</button>
 </form></div>
 
 <div><form>
     <input type="hidden" name="request" value="*134*19940*911#" />
-    <button th:action="@{/emulator/ussd/view}" method="get">Trigger safety alert</button>
+    <button th:action="@{/emulator/ussd/view/{phone}(phone=${userPhone})}" method="get">Trigger safety alert</button>
 </form></div>
 
 <div><form>
     <input type="hidden" name="request" value="*134*19940*411#" />
-    <button th:action="@{/emulator/ussd/view}" method="get">LiveWire</button>
+    <button th:action="@{/emulator/ussd/view/{phone}(phone=${userPhone})}" method="get">LiveWire</button>
 </form></div>
 
 <div>
     <form>
-        <input type="hidden" name="request" value="*134*19940*11#" />
-        <button th:action="@{/emulator/ussd/view}" method="get">Izwe Lami</button>
+        <input type="hidden" name="request" value="*134*19940*1#" />
+        <button th:action="@{/emulator/ussd/view/{phone}(phone=${userPhone})}" method="get">Izwe Lami</button>
+    </form>
+</div>
+
+<div>
+    <form th:action="@{/emulator/ussd/view/{phone}(phone=${userPhone})}" method="get">
+        <input name="request" type="text" />
+        <button type="submit">Other request</button>
     </form>
 </div>
 

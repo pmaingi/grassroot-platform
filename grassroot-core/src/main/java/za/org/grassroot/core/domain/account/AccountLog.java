@@ -1,10 +1,13 @@
 package za.org.grassroot.core.domain.account;
 
 import lombok.Getter;
+import org.apache.commons.lang3.StringUtils;
 import za.org.grassroot.core.domain.ActionLog;
-import za.org.grassroot.core.domain.Group;
 import za.org.grassroot.core.domain.User;
+import za.org.grassroot.core.domain.broadcast.Broadcast;
+import za.org.grassroot.core.domain.group.Group;
 import za.org.grassroot.core.enums.AccountLogType;
+import za.org.grassroot.core.enums.ActionLogType;
 import za.org.grassroot.core.util.UIDGenerator;
 
 import javax.persistence.*;
@@ -55,9 +58,18 @@ public class AccountLog implements ActionLog {
     @Column(name="reference_amount")
     private Long amountBilledOrPaid;
 
+    @ManyToOne
+    @JoinColumn(name = "broadcast_id")
+    private Broadcast broadcast;
+
     @Override
     public User getUser() {
-        return null;
+        return user;
+    }
+
+    @Override
+    public ActionLogType getActionLogType() {
+        return ActionLogType.ACCOUNT_LOG;
     }
 
     public static class Builder {
@@ -65,6 +77,7 @@ public class AccountLog implements ActionLog {
         private User user;
         private AccountLogType accountLogType;
         private Group group;
+        private Broadcast broadcast;
         private String paidGroupUid;
         private String description;
         private Long amountBilledOrPaid;
@@ -93,8 +106,13 @@ public class AccountLog implements ActionLog {
             return this;
         }
 
+        public Builder broadcast(Broadcast broadcast) {
+            this.broadcast = broadcast;
+            return this;
+        }
+
         public Builder description(String description) {
-            this.description = description.substring(Math.min(255, description.length()));
+            this.description = StringUtils.truncate(description, 255);
             return this;
         }
 
@@ -110,6 +128,7 @@ public class AccountLog implements ActionLog {
             AccountLog accountLog = new AccountLog(account, user, accountLogType);
             accountLog.description = description;
             accountLog.group = group;
+            accountLog.broadcast = broadcast;
             accountLog.paidGroupUid = paidGroupUid;
             accountLog.amountBilledOrPaid = amountBilledOrPaid;
 
@@ -149,8 +168,8 @@ public class AccountLog implements ActionLog {
         return "AccountLog{" +
                 "id=" + id +
                 ", creationTime =" + creationTime +
-                ", userUid=" + user.getUid() +
-                ", groupUid=" + group.getUid() +
+                ", userUid=" + (user == null ? "null" : user.getUid()) +
+                ", groupUid=" + (group == null ? "null" : group.getUid()) +
                 ", accountLogType=" + accountLogType +
                 ", description='" + description + '\'' +
                 '}';
