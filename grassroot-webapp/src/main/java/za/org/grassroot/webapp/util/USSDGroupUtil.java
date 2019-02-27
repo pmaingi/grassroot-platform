@@ -3,12 +3,12 @@ package za.org.grassroot.webapp.util;
 import com.google.common.collect.ImmutableMap;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.context.MessageSource;
 import org.springframework.data.domain.Page;
 import org.springframework.stereotype.Component;
 import org.springframework.util.StringUtils;
-import za.org.grassroot.core.domain.BaseRoles;
+import za.org.grassroot.core.domain.GroupRole;
 import za.org.grassroot.core.domain.Permission;
 import za.org.grassroot.core.domain.User;
 import za.org.grassroot.core.domain.association.GroupJoinRequest;
@@ -82,8 +82,8 @@ public class USSDGroupUtil extends USSDUtil {
     private final PermissionBroker permissionBroker;
     private final GroupJoinRequestService groupJoinRequestService;
 
-    @Autowired
-    public USSDGroupUtil(GroupBroker groupBroker, GroupQueryBroker groupQueryBroker, PermissionBroker permissionBroker, GroupJoinRequestService groupJoinRequestService) {
+    public USSDGroupUtil(MessageSource messageSource, GroupBroker groupBroker, GroupQueryBroker groupQueryBroker, PermissionBroker permissionBroker, GroupJoinRequestService groupJoinRequestService) {
+        super(messageSource);
         this.groupBroker = groupBroker;
         this.groupQueryBroker = groupQueryBroker;
         this.permissionBroker = permissionBroker;
@@ -342,7 +342,7 @@ public class USSDGroupUtil extends USSDUtil {
     private Set<MembershipInfo> turnNumbersIntoMembers(List<String> validNumbers) {
         Set<MembershipInfo> newMembers = new HashSet<>();
         for (String validNumber : validNumbers)
-            newMembers.add(new MembershipInfo(validNumber, BaseRoles.ROLE_ORDINARY_MEMBER, null));
+            newMembers.add(new MembershipInfo(validNumber, GroupRole.ROLE_ORDINARY_MEMBER, null));
         return newMembers;
     }
 
@@ -376,10 +376,9 @@ public class USSDGroupUtil extends USSDUtil {
         if (permissionBroker.isGroupPermissionAvailable(user, group, Permission.GROUP_PERMISSION_ADD_GROUP_MEMBER))
             listMenu.addMenuOption(groupMenuWithId(addMemberPrompt, groupUid), getMessage(menuKey + addMemberPrompt, user));
 
-        if (permissionBroker.isGroupPermissionAvailable(user, group, Permission.GROUP_PERMISSION_UPDATE_GROUP_DETAILS))
-            listMenu.addMenuOption(groupMenuWithId(renameGroupPrompt, groupUid), getMessage(menuKey + renameGroupPrompt, user));
-
         if (permissionBroker.isGroupPermissionAvailable(user, group, Permission.GROUP_PERMISSION_UPDATE_GROUP_DETAILS)) {
+            listMenu.addMenuOption(groupMenuWithId("organizer", groupUid), getMessage("group.menu.options.organizer", user));
+            listMenu.addMenuOption(groupMenuWithId(renameGroupPrompt, groupUid), getMessage(menuKey + renameGroupPrompt, user));
             listMenu.addMenuOption(groupMenuWithId(advancedGroupMenu, groupUid), getMessage(menuKey + advancedGroupMenu, user));
         } else {
             listMenu.addMenuOption(groupMenuWithId(unsubscribePrompt, groupUid), getMessage(menuKey + unsubscribePrompt, user));
@@ -416,7 +415,7 @@ public class USSDGroupUtil extends USSDUtil {
             listMenu.addMenuOption(groupMenuWithId(groupTokenMenu, groupUid), getMessage(tokenKey, user));
             listMenu.addMenuOption(groupMenuWithId("language", groupUid), getMessage("group.advanced.options.language", user));
             listMenu.addMenuOption(groupMenuWithId(visibility, groupUid), visibilityMenuOptionPrompt);
-            listMenu.addMenuOption(groupMenuWithId("organizer", groupUid), getMessage("group.menu.options.organizer", user));
+
         }
 
         if (groupBroker.isDeactivationAvailable(user, group, true))

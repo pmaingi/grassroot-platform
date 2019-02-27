@@ -1,18 +1,22 @@
 package za.org.grassroot.webapp.controller.rest;
 
+import net.sf.ehcache.Cache;
+import net.sf.ehcache.CacheManager;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.mockito.Mock;
-import org.mockito.runners.MockitoJUnitRunner;
+import org.mockito.junit.MockitoJUnitRunner;
+import org.springframework.cache.ehcache.EhCacheManagerFactoryBean;
+import org.springframework.context.annotation.Bean;
 import org.springframework.test.context.ContextConfiguration;
 import org.springframework.test.web.servlet.MockMvc;
 import za.org.grassroot.core.domain.User;
 import za.org.grassroot.core.domain.group.Group;
+import za.org.grassroot.core.domain.group.GroupPermissionTemplate;
 import za.org.grassroot.core.domain.task.*;
 import za.org.grassroot.core.repository.EventLogRepository;
 import za.org.grassroot.core.repository.GroupLogRepository;
 import za.org.grassroot.core.repository.UserLogRepository;
-import za.org.grassroot.services.PermissionBroker;
 import za.org.grassroot.services.group.GroupBroker;
 import za.org.grassroot.services.group.GroupJoinRequestService;
 import za.org.grassroot.services.group.GroupQueryBroker;
@@ -23,6 +27,7 @@ import za.org.grassroot.services.task.TodoBroker;
 import za.org.grassroot.services.user.GcmRegistrationBroker;
 import za.org.grassroot.services.user.UserManagementService;
 
+import java.io.IOException;
 import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.temporal.ChronoUnit;
@@ -43,7 +48,7 @@ public class RestAbstractUnitTest {
     protected final static Instant testInstant = Instant.now().plus(5, ChronoUnit.HOURS);
     protected final static LocalDateTime testDateTime = convertToUserTimeZone(testInstant, getSAST()).toLocalDateTime();
     protected final static User sessionTestUser = new User(testUserPhone, "testUser", null);
-    protected final static Group testGroup = new Group(testGroupName, sessionTestUser);
+    protected final static Group testGroup = new Group(testGroupName, GroupPermissionTemplate.DEFAULT_GROUP, sessionTestUser);
 
     protected MockMvc mockMvc;
 
@@ -53,9 +58,6 @@ public class RestAbstractUnitTest {
     protected final static Todo TEST_TO_DO = new Todo(sessionTestUser, testGroup, TodoType.ACTION_REQUIRED, "A test to-do", testInstant);
 
     @Mock
-    protected PermissionBroker permissionBrokerMock;
-
-    @Mock
     protected EventLogBroker eventLogBrokerMock;
 
     @Mock
@@ -63,6 +65,9 @@ public class RestAbstractUnitTest {
 
     @Mock
     protected TodoBroker todoBrokerMock;
+
+    @Mock
+    protected Cache cacheMock;
 
     @Mock
     protected UserManagementService userManagementServiceMock;
@@ -90,7 +95,6 @@ public class RestAbstractUnitTest {
 
     @Mock
     protected UserLogRepository userLogRepositoryMock;
-
 
     protected Vote createVote(String[] options) {
         Vote voteEvent = new Vote(testEventTitle, testInstant, sessionTestUser, testGroup, true, testEventDescription);

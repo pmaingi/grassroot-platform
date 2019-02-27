@@ -63,8 +63,7 @@ public class IncomingGroupJoinController extends BaseRestController {
         if (!StringUtils.isEmpty(userUid)) {
             log.info("joining with an existing, and logged in user!");
             User user = getUserFromRequest(request);
-            builder = builder.userLoggedIn(false)
-                    .userAlreadyMember(group.hasMember(user));
+            builder = builder.userLoggedIn(false).userAlreadyMember(user.isMemberOf(group));
         } else {
             builder.userLoggedIn(false);
         }
@@ -100,7 +99,8 @@ public class IncomingGroupJoinController extends BaseRestController {
         User user = userManager.load(joinedUserUid);
         // since the next call has to be unprotected, we need a way to prevent spoofing & strafing
         final String tokenForSubequent = tokenService.generateShortLivedOTP(user.getUsername()).getCode();
-        return ResponseEntity.ok(new JoinResponse(tokenForSubequent, new UserFullDTO(user)));
+        final UserFullDTO userFullDTO = new UserFullDTO(user);
+        return ResponseEntity.ok(new JoinResponse(tokenForSubequent, userFullDTO));
     }
 
     @RequestMapping(value = "/topics/{groupUid}", method = RequestMethod.POST)

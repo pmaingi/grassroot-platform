@@ -20,7 +20,7 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestMethod;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
-import za.org.grassroot.core.domain.BaseRoles;
+import za.org.grassroot.core.domain.GroupRole;
 import za.org.grassroot.core.domain.User;
 import za.org.grassroot.core.domain.campaign.Campaign;
 import za.org.grassroot.core.domain.campaign.CampaignType;
@@ -35,7 +35,7 @@ import za.org.grassroot.services.campaign.CampaignTextBroker;
 import za.org.grassroot.services.exception.CampaignCodeTakenException;
 import za.org.grassroot.services.exception.NoPaidAccountException;
 import za.org.grassroot.services.group.GroupBroker;
-import za.org.grassroot.services.group.GroupPermissionTemplate;
+import za.org.grassroot.core.domain.group.GroupPermissionTemplate;
 import za.org.grassroot.services.user.UserManagementService;
 import za.org.grassroot.webapp.controller.rest.BaseRestController;
 import za.org.grassroot.webapp.controller.rest.Grassroot2RestController;
@@ -68,7 +68,6 @@ public class CampaignManagerController extends BaseRestController {
 
     private final UserManagementService userManager;
     private final GroupBroker groupBroker;
-    private final CacheManager cacheManager;
 
     private Cache campaignsCache;
 
@@ -80,11 +79,7 @@ public class CampaignManagerController extends BaseRestController {
         this.campaignStatsBroker = campaignStatsBroker;
         this.userManager = userManager;
         this.groupBroker = groupBroker;
-        this.cacheManager = cacheManager;
-    }
 
-    @PostConstruct
-    public void init() {
         log.info("Setting up campaign caches");
         campaignsCache = cacheManager.getCache("campaign_view_dtos");
     }
@@ -92,8 +87,9 @@ public class CampaignManagerController extends BaseRestController {
     @RequestMapping(value = "/list", method = RequestMethod.GET)
     @ApiOperation(value = "List user's campaigns", notes = "Lists the campaigns a user has created")
     public ResponseEntity<List<CampaignViewDTO>> fetchCampaignsManagedByUser(HttpServletRequest request) {
-        List<CampaignViewDTO> dbCampaigns = campaignBroker
-                .getCampaignsManagedByUser(getUserIdFromRequest(request))
+        final String userUid = getUserIdFromRequest(request);
+        final List<Campaign> campaignsManagedByUser = campaignBroker.getCampaignsManagedByUser(userUid);
+        final List<CampaignViewDTO> dbCampaigns = campaignsManagedByUser
                 .stream().map(campaign -> getCampaign(campaign.getUid(), false))
                 .sorted(Comparator.comparing(CampaignViewDTO::getLastActivityEpochMilli, Comparator.reverseOrder()))
                 .collect(Collectors.toList());
@@ -146,14 +142,15 @@ public class CampaignManagerController extends BaseRestController {
         String masterGroupUid = createCampaignRequest.getGroupUid();
         if (StringUtils.isEmpty(masterGroupUid)) {
             User groupCreator = userManager.load(userUid);
-            MembershipInfo creator = new MembershipInfo(groupCreator, groupCreator.getName(), BaseRoles.ROLE_GROUP_ORGANIZER, null);
+            MembershipInfo creator = new MembershipInfo(groupCreator, groupCreator.getName(), GroupRole.ROLE_GROUP_ORGANIZER, null);
             Group createdGroup = groupBroker.create(userUid, createCampaignRequest.getGroupName(), null, Collections.singleton(creator),
                     GroupPermissionTemplate.CLOSED_GROUP, null, null, false, false, true);
 
             masterGroupUid = createdGroup.getUid();
         }
 
-        Campaign campaign = campaignBroker.create(createCampaignRequest.getName(),
+        Campaign campaign = campaignBroker.create(
+                createCampaignRequest.getName(),
                 createCampaignRequest.getCode(),
                 createCampaignRequest.getDescription(),
                 userUid,
@@ -167,7 +164,8 @@ public class CampaignManagerController extends BaseRestController {
                 createCampaignRequest.getSmsLimit() == null ? 0 : createCampaignRequest.getSmsLimit(),
                 createCampaignRequest.getImageKey());
 
-        return ResponseEntity.ok(recacheCampaignAndReturnDTO(campaign, true));
+        final CampaignViewDTO dto = recacheCampaignAndReturnDTO(campaign, true);
+        return ResponseEntity.ok(dto);
     }
 
     @ExceptionHandler(CampaignCodeTakenException.class)
@@ -190,14 +188,22 @@ public class CampaignManagerController extends BaseRestController {
     public Boolean isCodeAvailable(@RequestParam String code,
                                    @RequestParam(required = false) String currentCampaignUid) {
         log.info("is this code available: {}, for campaign uid: {}", code, currentCampaignUid);
-        return !campaignBroker.isCodeTaken(code, currentCampaignUid);
+        return nullCheckIncludingString(code) || !campaignBroker.isCodeTaken(code, currentCampaignUid);
     }
 
     @RequestMapping(value = "/words/check", method = RequestMethod.GET)
     @ApiOperation(value = "Check if a campaign join word is available")
     public Boolean isJoinWordAvailable(@RequestParam String word, @RequestParam(required = false) String currentCampaignUid) {
         log.info("is this join word available: {}, for campaign uid: {}", word, currentCampaignUid);
-        return !campaignBroker.isTextJoinWordTaken(word.trim(), currentCampaignUid);
+        return nullCheckIncludingString(word) || !campaignBroker.isTextJoinWordTaken(word.trim(), currentCampaignUid);
+    }
+
+    private boolean nullCheckIncludingString(String word) {
+        if (StringUtils.isEmpty(word) || "null".equals(word)) {
+            log.info("Received null join word, returning true");
+            return true;
+        }
+        return false;
     }
 
     @RequestMapping(value = "/messages/set/{campaignUid}", method = RequestMethod.POST, consumes = MediaType.APPLICATION_JSON_VALUE)
@@ -238,8 +244,8 @@ public class CampaignManagerController extends BaseRestController {
                                                       @RequestParam(required = false) List<String> joinTopics,
                                                       @RequestParam(required = false) String newMasterGroupUid) {
         String userUid = getUserIdFromRequest(request);
-        log.info("altering campaign, setting fields: name = {}, desc = {}, image = {}, endDate = {}, landing = {}, petition = {}",
-                name, description, mediaFileUid, endDateMillis, landingUrl, petitionApi);
+        log.info("altering campaign, setting fields: name = {}, code ={}, desc = {}, image = {}, endDate = {}, landing = {}, petition = {}",
+                name, newCode, description, mediaFileUid, endDateMillis, landingUrl, petitionApi);
 
         Instant endDate = endDateMillis != null ? Instant.ofEpochMilli(endDateMillis) : null;
         log.info("and end date instant = {}", endDate);
