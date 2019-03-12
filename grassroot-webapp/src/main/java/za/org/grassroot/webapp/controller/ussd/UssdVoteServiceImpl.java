@@ -327,7 +327,10 @@ public class UssdVoteServiceImpl implements UssdVoteService {
 	}
 
 	private USSDMenu processMassVoteOpening(final Vote vote, final User user) {
-		if (vote.hasAdditionalLanguagePrompts()) {
+		if (vote.isPreClosed()) {
+			final String prompt = vote.getPostVotePrompt(Locale.ENGLISH).orElse(ussdSupport.getMessage("vote.start.prompt.vote-closed", user));
+			return new USSDMenu(prompt);
+		} else if (vote.hasAdditionalLanguagePrompts()) {
 			final USSDMenu langMenu = new USSDMenu(ussdSupport.getMessage("language.prompt.short", user));
 			final String voteUri = voteMenus + "mass/language?voteUid=" + vote.getUid() + "&language=";
 			vote.getPromptLanguages().forEach(locale ->
@@ -336,8 +339,8 @@ public class UssdVoteServiceImpl implements UssdVoteService {
 			);
 			return langMenu;
 		} else  {
-			final USSDMenu menu = massVoteMenu(vote, UserMinimalProjection.extractFromUser(user), null); // handles option setting, etc.
-			log.info("Initiated a mass vote, here it is: {}", menu);
+			final USSDMenu menu = massVoteMenu(vote, UserMinimalProjection.extractFromUser(user), Locale.ENGLISH); // handles option setting, etc.
+			log.debug("Initiated a mass vote, here it is: {}", menu);
 			return menu;
 		}
 	}
@@ -399,9 +402,9 @@ public class UssdVoteServiceImpl implements UssdVoteService {
 	public Request processMassVoteResponse(String inputNumber, String voteUid, String response, Locale language, Integer voteCount) throws URISyntaxException {
 		final Vote vote = voteBroker.load(voteUid);
 		final UserMinimalProjection user = userManager.findUserMinimalByMsisdn(inputNumber);
+		voteBroker.recordUserVote(user.getUid(), voteUid, response);
 		if (vote.hasPostVotePrompt()) {
 			// todo : clear cache, etc
-			voteBroker.recordUserVote(user.getUid(), voteUid, response);
 			final String prompt = vote.getPostVotePrompt(language).orElse(ussdSupport.getMessage("vote.start.prompt.vote-recorded", user));
 			return ussdSupport.menuBuilder(new USSDMenu(prompt));
 		} else {

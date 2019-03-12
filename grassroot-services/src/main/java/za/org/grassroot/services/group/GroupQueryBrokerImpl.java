@@ -164,8 +164,13 @@ public class GroupQueryBrokerImpl implements GroupQueryBroker {
      */
 
     private boolean isGroupChangedSince(Group group, Instant changedSince) {
+        if (changedSince == null) {
+            logger.error("Changed since called with null Instant, group: {}", group.getName());
+            return true; // take it as earliest time, by definition
+        }
+
         GroupLog mostRecentLog = getMostRecentLog(group);
-        if (mostRecentLog.getCreatedDateTime().isAfter(changedSince)) {
+        if (mostRecentLog != null && mostRecentLog.getCreatedDateTime().isAfter(changedSince)) {
             return true;
         }
 

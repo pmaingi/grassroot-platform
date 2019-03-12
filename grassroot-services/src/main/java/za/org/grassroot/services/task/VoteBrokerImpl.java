@@ -1,5 +1,6 @@
 package za.org.grassroot.services.task;
 
+import com.google.common.base.Stopwatch;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -10,7 +11,9 @@ import org.springframework.data.jpa.domain.Specification;
 import org.springframework.security.access.AccessDeniedException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.util.CollectionUtils;
 import org.springframework.util.StringUtils;
+import org.thymeleaf.util.MapUtils;
 import za.org.grassroot.core.domain.User;
 import za.org.grassroot.core.domain.UserLog;
 import za.org.grassroot.core.domain.group.Group;
@@ -23,6 +26,7 @@ import za.org.grassroot.core.enums.EventRSVPResponse;
 import za.org.grassroot.core.enums.UserInterfaceType;
 import za.org.grassroot.core.enums.UserLogType;
 import za.org.grassroot.core.repository.EventLogRepository;
+import za.org.grassroot.core.repository.MembershipRepository;
 import za.org.grassroot.core.repository.VoteRepository;
 import za.org.grassroot.core.specifications.EventSpecifications;
 import za.org.grassroot.core.util.StringArrayUtil;
@@ -45,6 +49,7 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
+import java.util.concurrent.TimeUnit;
 
 import static za.org.grassroot.core.enums.EventLogType.CHANGE;
 import static za.org.grassroot.core.specifications.EventLogSpecifications.*;
@@ -72,14 +77,16 @@ public class VoteBrokerImpl implements VoteBroker {
     private final UserManagementService userService;
     private final VoteRepository voteRepository;
     private final EventLogRepository eventLogRepository;
+    private final MembershipRepository membershipRepository;
     private final MessageAssemblingService messageService;
     private final LogsAndNotificationsBroker logsAndNotificationsBroker;
 
     @Autowired
-    public VoteBrokerImpl(UserManagementService userService, VoteRepository voteRepository, EventLogRepository eventLogRepository, MessageAssemblingService messageService, LogsAndNotificationsBroker logsAndNotificationsBroker) {
+    public VoteBrokerImpl(UserManagementService userService, VoteRepository voteRepository, EventLogRepository eventLogRepository, MembershipRepository membershipRepository, MessageAssemblingService messageService, LogsAndNotificationsBroker logsAndNotificationsBroker) {
         this.userService = userService;
         this.voteRepository = voteRepository;
         this.eventLogRepository = eventLogRepository;
+        this.membershipRepository = membershipRepository;
         this.messageService = messageService;
         this.logsAndNotificationsBroker = logsAndNotificationsBroker;
     }
@@ -221,15 +228,19 @@ public class VoteBrokerImpl implements VoteBroker {
     @Override
     @Transactional(readOnly = true)
     public Map<String, Long> fetchVoteResults(String userUid, String voteUid, boolean swallowMemberException) {
+        final Stopwatch stopwatch = Stopwatch.createStarted();
         User user = userService.load(Objects.requireNonNull(userUid));
         Vote vote = voteRepository.findOneByUid(Objects.requireNonNull(voteUid));
+        logger.debug("Fetching vote results, for vote: {}, elapsed so far: {} msecs", vote.getName(), stopwatch.elapsed(TimeUnit.MILLISECONDS));
 
         try {
             validateUserPartOfVote(user, vote, false);
-            long sizeOfVote = vote.isAllGroupMembersAssigned() ? vote.getParent().getMembers().size() :
+            long sizeOfVote = vote.isAllGroupMembersAssigned() ? membershipRepository.countByGroup(vote.getAncestorGroup()) :
                     vote.getAssignedMembers().size();
+            logger.debug("And now have group size, elapsed: {} msecs", stopwatch.elapsed(TimeUnit.MILLISECONDS));
             Map<String, Long> resultMap = StringArrayUtil.isAllEmptyOrNull(vote.getVoteOptions()) ?
                     calculateYesNoResults(vote) : calculateMultiOptionResults(vote, vote.getVoteOptions());
+            logger.info("Calculation done, elapsed: {} msecs", stopwatch.elapsed(TimeUnit.MILLISECONDS));
             resultMap.put("TOTAL_VOTE_MEMBERS", sizeOfVote);
             return resultMap;
         } catch (AccessDeniedException e) {
@@ -252,6 +263,24 @@ public class VoteBrokerImpl implements VoteBroker {
         logger.info("Looking for subsequent mass vote, passed place: {}, floored: {}", votePlaceInQueue, pageSize);
         final PageRequest pageRequest = PageRequest.of(1, pageSize, SORT_DIRECTION);
         return voteRepository.findAll(EventSpecifications.isOpenMassVoteForGroup(group), pageRequest).stream().findFirst();
+    }
+
+    @Override
+    @Transactional
+    public void updateVoteOptions(String userUid, String voteUid, List<String> voteOptions, Map<Locale, List<String>> multiLingualVoteOptions) {
+        final User user = userService.load(userUid);
+        final Vote vote = voteRepository.findOneByUid(voteUid);
+        validateUserCanEdit(vote, user);
+
+        if (!CollectionUtils.isEmpty(voteOptions)) {
+            vote.setVoteOptions(voteOptions);
+        }
+
+        if (!MapUtils.isEmpty(multiLingualVoteOptions)) {
+            vote.setMultiLangOptions(multiLingualVoteOptions);
+        }
+
+        eventLogRepository.save(new EventLog(user, vote, CHANGE, "Altered vote options"));
     }
 
     @Override
@@ -281,6 +310,28 @@ public class VoteBrokerImpl implements VoteBroker {
 
         vote.removePostVotePrompts();
         logger.info("Removed post vote prompts, now vote tags = {}", vote.getTagList());
+        eventLogRepository.save(new EventLog(user, vote, CHANGE, "Remove post vote prompts"));
+    }
+
+    @Override
+    @Transactional
+    public void updateMassVoteToggles(String userUid, String voteUid, Boolean randomizeOptions, Boolean preCloseVote) {
+        final User user = userService.load(userUid);
+        final Vote vote = voteRepository.findOneByUid(voteUid);
+        validateUserCanEdit(vote, user);
+
+        String logDescription = "Changed ";
+        if (randomizeOptions != null) {
+            vote.setRandomize(randomizeOptions);
+            logDescription += "randomize to " + randomizeOptions + " ";
+        }
+
+        if (preCloseVote != null) {
+            vote.setPreClosed(preCloseVote);
+            logDescription += "preclosed to " + preCloseVote;
+        }
+
+        eventLogRepository.save(new EventLog(user, vote, CHANGE, logDescription));
     }
 
     private void validateUserCanEdit(Vote vote, User user) {
@@ -290,8 +341,10 @@ public class VoteBrokerImpl implements VoteBroker {
 
     private Map<String, Long> calculateMultiOptionResults(Vote vote, List<String> options) {
         Map<String, Long> results = new LinkedHashMap<>();
-        List<EventLog> eventLogs = eventLogRepository.findAll(Specification.where(isResponseToVote(vote)));
-        options.forEach(o -> results.put(o, eventLogs.stream().filter(el -> o.equalsIgnoreCase(el.getTag())).count()));
+        long startTime = System.currentTimeMillis();
+//        List<EventLog> eventLogs = eventLogRepository.findAll(Specification.where(isResponseToVote(vote)));
+        options.forEach(o -> results.put(o, eventLogRepository.count(isVoteOptionSelection(vote, o))));
+        logger.info("Result count took {} msecs", System.currentTimeMillis() - startTime);
         return results;
     }
 
